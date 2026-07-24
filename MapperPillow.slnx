@@ -7,5 +7,6 @@
   <Project Path="src/MapperPillow/MapperPillow.csproj" />
   <Project Path="src/MapperPillow.Generator/MapperPillow.Generator.csproj" />
   <Project Path="tests/MapperPillow.Tests/MapperPillow.Tests.csproj" />
+  <Project Path="tests/MapperPillow.Generator.Tests/MapperPillow.Generator.Tests.csproj" />
   <Project Path="samples/MapperPillow.Sample/MapperPillow.Sample.csproj" />
 </Solution>

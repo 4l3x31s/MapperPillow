@@ -124,6 +124,20 @@ Chosen engine: **Roslyn incremental source generator + C# interceptors.**
 - **Milestone 6 — Compile-time diagnostics.** Report unmapped destination members
   as build warnings/errors with the exact member name.
 
+## Testing strategy
+
+Two tiers:
+
+- **`MapperPillow.Tests`** — behavioral tests. Real `MapTo` calls run through the
+  generated interceptors (verified via `MapperPillowTelemetry`, which only the
+  generated code increments). Proves the mapping *result* and that reflection is
+  bypassed.
+- **`MapperPillow.Generator.Tests`** — generator unit tests. `GeneratorHarness`
+  runs the generator in-memory over a source string (`CSharpGeneratorDriver`) and
+  asserts on the emitted code and diagnostics — no compilation or execution. Proves
+  the generator's *decisions* (interceptor shape, `MP0001`, open-generic fallback).
+  New generator behavior gets a red/green test here first.
+
 ## 7. Current status
 
 Direct `MapTo<TDestination>()` calls on concrete types are served by generated
