@@ -11,6 +11,13 @@ internal static class ReflectionMapper
 {
     public static object Map(object source, Type destinationType)
     {
+        if (destinationType.IsArray)
+        {
+            throw new NotSupportedException(
+                $"MapperPillow: mapping to array type '{destinationType}' requires the source generator. " +
+                "Enable it with <InterceptorsNamespaces>$(InterceptorsNamespaces);MapperPillow.Generated</InterceptorsNamespaces>.");
+        }
+
         var destination = Activator.CreateInstance(destinationType)
             ?? throw new InvalidOperationException($"Could not create an instance of '{destinationType}'.");
 

@@ -99,8 +99,12 @@ Chosen engine: **Roslyn incremental source generator + C# interceptors.**
   `MapTo<T>` inside the `Map<T>` alias) are skipped and left to the fallback. This
   is where "no runtime reflection" became real. Verified by a telemetry-based test
   that fails if a call is served by reflection instead of the interceptor.
-- **Milestone 3 — Richer mapping.** Collections/arrays, nested objects, flattening
-  (`Order.Customer.Name` → `CustomerName`), nullable handling, enums.
+- **Milestone 3 — Richer mapping (in progress).**
+  - Collections/arrays (DONE): `List<T>`, arrays, and `IEnumerable/IList/ICollection/
+    IReadOnlyList/IReadOnlyCollection<T>` destinations, mapping each element by the
+    scalar rules. Source may be any `IEnumerable<T>` or array.
+  - Pending: nested complex objects, flattening (`Order.Customer.Name` →
+    `CustomerName`), nullable handling, enums.
 - **Milestone 4 — Escape hatches.** Minimal, opt-in customization for the unusual
   cases (member remap, ignore, custom converter) — kept small on purpose.
 - **Milestone 5 — `ProjectTo` for `IQueryable`** (EF Core translation).

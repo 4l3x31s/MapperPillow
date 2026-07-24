@@ -12,10 +12,11 @@ using Microsoft.CodeAnalysis.Text;
 namespace MapperPillow.Generator;
 
 /// <summary>
-/// Milestone 2: replaces each <c>source.MapTo&lt;TDestination&gt;()</c> call with a
-/// compile-time interceptor that constructs the destination and copies same-name,
-/// assignable properties — no runtime reflection. Call sites the generator does not
-/// cover fall back to the runtime reflection implementation.
+/// Replaces each concrete <c>source.MapTo&lt;TDestination&gt;()</c> call with a
+/// compile-time interceptor — no runtime reflection. Supports scalar object
+/// mapping (same-name, implicitly-convertible properties) and collection mapping
+/// (<c>List&lt;T&gt;</c>, arrays, and the common read-only/list interfaces).
+/// Call sites the generator cannot handle are left to the runtime fallback.
 /// </summary>
 [Generator]
 public sealed class MapToInterceptorGenerator : IIncrementalGenerator
@@ -35,14 +36,10 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
         context.RegisterSourceOutput(callSites, static (spc, items) => Emit(spc, items));
     }
 
-    // Cheap syntactic gate: `<expr>.MapTo<...>(...)`.
     private static bool IsCandidateMapToCall(SyntaxNode node) =>
         node is InvocationExpressionSyntax
         {
-            Expression: MemberAccessExpressionSyntax
-            {
-                Name: GenericNameSyntax { Identifier.ValueText: "MapTo" }
-            }
+            Expression: MemberAccessExpressionSyntax { Name: GenericNameSyntax { Identifier.ValueText: "MapTo" } }
         };
 
     private static CallSite? GetCallSite(GeneratorSyntaxContext ctx, CancellationToken ct)
@@ -50,13 +47,11 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
         var invocation = (InvocationExpressionSyntax)ctx.Node;
         var memberAccess = (MemberAccessExpressionSyntax)invocation.Expression;
         var generic = (GenericNameSyntax)memberAccess.Name;
-
         if (generic.TypeArgumentList.Arguments.Count != 1)
         {
             return null;
         }
 
-        // Make sure this is really MapperPillow's MapTo, not an unrelated method.
         if (ctx.SemanticModel.GetSymbolInfo(invocation, ct).Symbol is not IMethodSymbol method ||
             method.Name != "MapTo" ||
             method.ContainingType?.ToDisplayString() != "MapperPillow.MapperPillowExtensions")
@@ -66,10 +61,8 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
 
         var destType = ctx.SemanticModel.GetTypeInfo(generic.TypeArgumentList.Arguments[0], ct).Type;
         var srcType = ctx.SemanticModel.GetTypeInfo(memberAccess.Expression, ct).Type;
-
-        // Only intercept concrete, closed types. Open generics (e.g. the MapTo<T>
-        // call inside the Map<T> alias) and error types are left to the runtime.
-        if (destType is not INamedTypeSymbol || srcType is not INamedTypeSymbol ||
+        if (destType is null || srcType is null ||
+            destType is ITypeParameterSymbol || srcType is ITypeParameterSymbol ||
             destType.TypeKind == TypeKind.Error || srcType.TypeKind == TypeKind.Error)
         {
             return null;
@@ -81,20 +74,95 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
             return null;
         }
 
-        var assignments = BuildAssignments(ctx.SemanticModel.Compilation, srcType, destType);
+        var body = BuildBody(ctx.SemanticModel.Compilation, srcType, destType);
+        if (body is null)
+        {
+            return null; // not mappable here — leave it to the runtime fallback
+        }
 
         return new CallSite(
-            srcType.ToDisplayString(FullyQualified),
             destType.ToDisplayString(FullyQualified),
-            string.Join(",", assignments),
+            body,
             location.GetInterceptsLocationAttributeSyntax());
     }
 
-    private static List<string> BuildAssignments(Compilation compilation, ITypeSymbol source, ITypeSymbol destination)
+    private static string? BuildBody(Compilation compilation, ITypeSymbol source, ITypeSymbol destination)
+    {
+        var destElement = CollectionElement(destination);
+        if (destElement is not null)
+        {
+            var srcElement = EnumerableElement(source);
+            if (srcElement is not INamedTypeSymbol srcElem ||
+                destElement is not INamedTypeSymbol destElem ||
+                !HasParameterlessCtor(destElem))
+            {
+                return null;
+            }
+
+            return BuildCollectionBody(compilation, srcElem, destination, destElem);
+        }
+
+        if (source is not INamedTypeSymbol ||
+            destination is not INamedTypeSymbol destNamed ||
+            !HasParameterlessCtor(destNamed))
+        {
+            return null;
+        }
+
+        return BuildScalarBody(compilation, source, destination);
+    }
+
+    private static string BuildScalarBody(Compilation compilation, ITypeSymbol source, ITypeSymbol destination)
+    {
+        var src = source.ToDisplayString(FullyQualified);
+        var dest = destination.ToDisplayString(FullyQualified);
+
+        var sb = new StringBuilder();
+        sb.AppendLine("            if (source is null) throw new global::System.ArgumentNullException(nameof(source));");
+        sb.AppendLine($"            var typed = ({src})source;");
+        sb.AppendLine($"            var result = new {dest}");
+        sb.AppendLine("            {");
+        foreach (var name in MappableProperties(compilation, source, destination))
+        {
+            sb.AppendLine($"                {name} = typed.{name},");
+        }
+        sb.AppendLine("            };");
+        sb.AppendLine("            global::MapperPillow.MapperPillowTelemetry.MarkIntercepted();");
+        sb.Append("            return result;");
+        return sb.ToString();
+    }
+
+    private static string BuildCollectionBody(
+        Compilation compilation, ITypeSymbol sourceElement, ITypeSymbol destination, ITypeSymbol destinationElement)
+    {
+        var srcElem = sourceElement.ToDisplayString(FullyQualified);
+        var destElem = destinationElement.ToDisplayString(FullyQualified);
+        var toArray = destination is IArrayTypeSymbol;
+
+        var sb = new StringBuilder();
+        sb.AppendLine("            if (source is null) throw new global::System.ArgumentNullException(nameof(source));");
+        sb.AppendLine($"            var typed = (global::System.Collections.Generic.IEnumerable<{srcElem}>)source;");
+        sb.AppendLine($"            var result = new global::System.Collections.Generic.List<{destElem}>();");
+        sb.AppendLine("            foreach (var item in typed)");
+        sb.AppendLine("            {");
+        sb.AppendLine($"                result.Add(new {destElem}");
+        sb.AppendLine("                {");
+        foreach (var name in MappableProperties(compilation, sourceElement, destinationElement))
+        {
+            sb.AppendLine($"                    {name} = item.{name},");
+        }
+        sb.AppendLine("                });");
+        sb.AppendLine("            }");
+        sb.AppendLine("            global::MapperPillow.MapperPillowTelemetry.MarkIntercepted();");
+        sb.Append(toArray
+            ? "            return global::System.Linq.Enumerable.ToArray(result);"
+            : "            return result;");
+        return sb.ToString();
+    }
+
+    private static IEnumerable<string> MappableProperties(Compilation compilation, ITypeSymbol source, ITypeSymbol destination)
     {
         var sourceProps = ReadableProperties(source);
-        var mapped = new List<string>();
-
         foreach (var dest in SettableProperties(destination))
         {
             if (!sourceProps.TryGetValue(dest.Name, out var src))
@@ -105,12 +173,70 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
             var conversion = compilation.ClassifyConversion(src.Type, dest.Type);
             if (conversion.IsIdentity || conversion.IsImplicit)
             {
-                mapped.Add(dest.Name);
+                yield return dest.Name;
+            }
+        }
+    }
+
+    // --- collection shape detection -----------------------------------------
+
+    private static ITypeSymbol? CollectionElement(ITypeSymbol type)
+    {
+        if (type is IArrayTypeSymbol array)
+        {
+            return array.ElementType;
+        }
+
+        if (type is INamedTypeSymbol named && named.TypeArguments.Length == 1)
+        {
+            switch (named.OriginalDefinition.SpecialType)
+            {
+                case SpecialType.System_Collections_Generic_IEnumerable_T:
+                case SpecialType.System_Collections_Generic_IList_T:
+                case SpecialType.System_Collections_Generic_ICollection_T:
+                case SpecialType.System_Collections_Generic_IReadOnlyList_T:
+                case SpecialType.System_Collections_Generic_IReadOnlyCollection_T:
+                    return named.TypeArguments[0];
+            }
+
+            if (named.ConstructedFrom.ToDisplayString() == "System.Collections.Generic.List<T>")
+            {
+                return named.TypeArguments[0];
             }
         }
 
-        return mapped;
+        return null;
     }
+
+    private static ITypeSymbol? EnumerableElement(ITypeSymbol type)
+    {
+        if (type is IArrayTypeSymbol array)
+        {
+            return array.ElementType;
+        }
+
+        IEnumerable<INamedTypeSymbol> candidates = type.AllInterfaces;
+        if (type is INamedTypeSymbol named)
+        {
+            candidates = new[] { named }.Concat(candidates);
+        }
+
+        foreach (var candidate in candidates)
+        {
+            if (candidate.OriginalDefinition.SpecialType == SpecialType.System_Collections_Generic_IEnumerable_T)
+            {
+                return candidate.TypeArguments[0];
+            }
+        }
+
+        return null;
+    }
+
+    // --- property helpers ----------------------------------------------------
+
+    private static bool HasParameterlessCtor(INamedTypeSymbol type) =>
+        type.IsValueType ||
+        type.InstanceConstructors.Any(c => c.Parameters.Length == 0 && c.DeclaredAccessibility == Accessibility.Public);
 
     private static Dictionary<string, IPropertySymbol> ReadableProperties(ITypeSymbol type)
     {
@@ -162,6 +288,8 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
         }
     }
 
+    // --- emission ------------------------------------------------------------
+
     private static void Emit(SourceProductionContext spc, ImmutableArray<CallSite> callSites)
     {
         if (callSites.IsDefaultOrEmpty)
@@ -170,14 +298,13 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
         }
 
         var groups = callSites
-            .GroupBy(c => (c.SourceType, c.DestType, c.AssignmentsCsv))
+            .GroupBy(c => (c.ReturnType, c.Body))
             .ToArray();
 
         var sb = new StringBuilder();
         sb.AppendLine("// <auto-generated/>");
         sb.AppendLine("#nullable enable");
         sb.AppendLine();
-        // The interceptor marker attribute, kept file-local so it never collides.
         sb.AppendLine("namespace System.Runtime.CompilerServices");
         sb.AppendLine("{");
         sb.AppendLine("    [global::System.AttributeUsage(global::System.AttributeTargets.Method, AllowMultiple = true)]");
@@ -195,27 +322,14 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
         var index = 0;
         foreach (var group in groups)
         {
-            var (sourceType, destType, csv) = group.Key;
-            var props = csv.Length == 0 ? Array.Empty<string>() : csv.Split(',');
-
             foreach (var callSite in group)
             {
                 sb.AppendLine("        " + callSite.AttributeText);
             }
 
-            sb.AppendLine($"        public static {destType} Map_{index}(this object source)");
+            sb.AppendLine($"        public static {group.Key.ReturnType} Map_{index}(this object source)");
             sb.AppendLine("        {");
-            sb.AppendLine("            if (source is null) throw new global::System.ArgumentNullException(nameof(source));");
-            sb.AppendLine($"            var typed = ({sourceType})source;");
-            sb.AppendLine($"            var result = new {destType}");
-            sb.AppendLine("            {");
-            foreach (var prop in props)
-            {
-                sb.AppendLine($"                {prop} = typed.{prop},");
-            }
-            sb.AppendLine("            };");
-            sb.AppendLine("            global::MapperPillow.MapperPillowTelemetry.MarkIntercepted();");
-            sb.AppendLine("            return result;");
+            sb.AppendLine(group.Key.Body);
             sb.AppendLine("        }");
             sb.AppendLine();
             index++;
@@ -227,5 +341,5 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
         spc.AddSource("MapperPillow.Interceptors.g.cs", SourceText.From(sb.ToString(), Encoding.UTF8));
     }
 
-    private sealed record CallSite(string SourceType, string DestType, string AssignmentsCsv, string AttributeText);
+    private sealed record CallSite(string ReturnType, string Body, string AttributeText);
 }

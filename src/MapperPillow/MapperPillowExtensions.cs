@@ -16,7 +16,6 @@ public static class MapperPillowExtensions
     /// <typeparamref name="TDestination"/>, copying properties that match by name.
     /// </summary>
     public static TDestination MapTo<TDestination>(this object source)
-        where TDestination : new()
     {
         if (source is null)
         {
@@ -31,6 +30,5 @@ public static class MapperPillowExtensions
     /// so migrating code keeps reading naturally. Prefer <c>MapTo</c> in new code.
     /// </summary>
     public static TDestination Map<TDestination>(this object source)
-        where TDestination : new()
         => source.MapTo<TDestination>();
 }
