@@ -32,8 +32,8 @@ at runtime.
 - **Zero ceremony** — a single `MapTo<T>()` extension, discovered automatically.
 - **Compile-time** — mapping is generated code; no reflection on the hot path.
 - **Conventions that just work** — same-name properties, collections, arrays,
-  nested objects, collection-valued properties, enums, and flattening
-  (`Order.Customer.Name` → `CustomerName`).
+  nested objects, collection-valued properties, enums, positional records, and
+  flattening (`Order.Customer.Name` → `CustomerName`).
 - **Build-time safety** — the `MP0001` diagnostic names any destination member left
   unmapped. Opt into treating it as an error for strict projects.
 - **Auditable** — the generated mapping is plain C# you can inspect and step through.

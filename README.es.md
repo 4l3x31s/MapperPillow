@@ -34,8 +34,8 @@ mapear en tiempo de compilación**, no en tiempo de ejecución.
 - **Tiempo de compilación** — el mapeo es código generado; sin reflexión en la ruta
   caliente.
 - **Convenciones que funcionan** — propiedades con el mismo nombre, colecciones,
-  arrays, objetos anidados, propiedades que son colecciones, enums y aplanamiento
-  (`Order.Customer.Name` → `CustomerName`).
+  arrays, objetos anidados, propiedades que son colecciones, enums, records
+  posicionales y aplanamiento (`Order.Customer.Name` → `CustomerName`).
 - **Seguridad en compilación** — el diagnóstico `MP0001` nombra cualquier miembro del
   destino que quede sin mapear. Puedes tratarlo como error en proyectos estrictos.
 - **Auditable** — el mapeo generado es C# normal que puedes inspeccionar y depurar.

@@ -116,6 +116,11 @@ Chosen engine: **Roslyn incremental source generator + C# interceptors.**
   - Enums (DONE): enum <-> enum by value (`(Dest)src`), enum -> string
     (`.ToString()`), string -> enum (`Enum.Parse`). Other enum/numeric combinations
     fall back to the runtime mapper.
+  - Constructor-based destinations (DONE): types without a parameterless constructor
+    (e.g. positional records) map via the richest satisfiable public constructor
+    (`new Dest(a, b) { ... }`), matching parameters to source members by name
+    (case-insensitive) and filling remaining settable members via the initializer.
+    Unified `BuildConstruction` is used for scalar, nested, and collection elements.
   - Pending: enum<->numeric, nullable handling.
 
 - **Milestone 4 — Compile-time diagnostics (DONE).** `MP0001` warns at the call

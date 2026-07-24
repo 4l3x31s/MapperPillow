@@ -113,8 +113,9 @@ var arreglo = usuarios.MapTo<UserDto[]>();
 ```
 
 - Lanza `ArgumentNullException` si `source` es `null`.
-- El destino necesita un constructor sin parámetros (salvo arrays y colecciones, que
-  se construyen internamente).
+- El destino puede tener constructor sin parámetros (se usa un object initializer) o
+  un constructor con parámetros, como un **record posicional** (`record Dto(string
+  Name, int Age)`): sus argumentos se llenan desde el origen por nombre.
 
 ### `Map<TDestination>()`
 

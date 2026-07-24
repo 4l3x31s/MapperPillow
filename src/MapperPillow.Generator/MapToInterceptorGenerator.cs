@@ -13,11 +13,12 @@ namespace MapperPillow.Generator;
 
 /// <summary>
 /// Replaces each concrete <c>source.MapTo&lt;TDestination&gt;()</c> call with a
-/// compile-time interceptor — no runtime reflection. Supports scalar object
-/// mapping, nested complex objects (recursive, null-guarded), one-level flattening
-/// (<c>CustomerName</c> → <c>Customer.Name</c>) and collection mapping. Destination
-/// members left unmapped are reported as MP0001 warnings. Call sites the generator
-/// cannot handle at all are left to the runtime fallback.
+/// compile-time interceptor — no runtime reflection. Supports scalar objects
+/// (parameterless-ctor and constructor-based, e.g. positional records), nested
+/// objects, collections/arrays, collection-valued properties, multi-level
+/// flattening, enums, and per-member attributes (<c>[MapIgnore]</c>, <c>[MapFrom]</c>).
+/// Unmapped destination members are reported as MP0001 warnings. Call sites the
+/// generator cannot handle are left to the runtime fallback.
 /// </summary>
 [Generator]
 public sealed class MapToInterceptorGenerator : IIncrementalGenerator
@@ -32,7 +33,7 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
         category: "MapperPillow",
         defaultSeverity: DiagnosticSeverity.Warning,
         isEnabledByDefault: true,
-        description: "A destination property has no matching source member. Map it, or ignore it once member configuration is available.");
+        description: "A destination property has no matching source member. Map it, remap it with [MapFrom], or exclude it with [MapIgnore].");
 
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
@@ -77,7 +78,6 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
             destType.TypeKind == TypeKind.Error || srcType.TypeKind == TypeKind.Error ||
             IsFileLocal(destType) || IsFileLocal(srcType))
         {
-            // File-local types cannot be referenced from the generated file; fall back.
             return null;
         }
 
@@ -107,60 +107,54 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
         var destElement = CollectionElement(destination);
         if (destElement is not null)
         {
-            var srcElement = EnumerableElement(source);
-            if (srcElement is not INamedTypeSymbol srcElem ||
+            if (EnumerableElement(source) is not INamedTypeSymbol srcElem ||
                 destElement is not INamedTypeSymbol destElem ||
-                !HasParameterlessCtor(destElem) ||
                 IsFileLocal(destElem) || IsFileLocal(srcElem))
             {
                 return null;
             }
 
-            var elemPairs = BuildAssignmentPairs(compilation, srcElem, destElem, "item", ImmutableHashSet.Create(StringComparer.Ordinal, destElem.ToDisplayString(FullyQualified)));
-            return (BuildCollectionBody(destination, destElem.ToDisplayString(FullyQualified), srcElem.ToDisplayString(FullyQualified), elemPairs), Unmapped(destElem, elemPairs));
+            var elemVisited = ImmutableHashSet.Create(StringComparer.Ordinal, destElem.ToDisplayString(FullyQualified));
+            var built = BuildConstruction(compilation, srcElem, destElem, "item", elemVisited);
+            if (built is null)
+            {
+                return null;
+            }
+
+            return (
+                BuildCollectionBody(destination, destElem.ToDisplayString(FullyQualified), srcElem.ToDisplayString(FullyQualified), built.Value.Expr),
+                UnmappedFrom(destElem, built.Value.Mapped));
         }
 
-        if (source is not INamedTypeSymbol ||
-            destination is not INamedTypeSymbol destNamed ||
-            !HasParameterlessCtor(destNamed))
+        if (source is not INamedTypeSymbol || destination is not INamedTypeSymbol destNamed)
         {
             return null;
         }
 
-        var pairs = BuildAssignmentPairs(compilation, source, destination, "typed", ImmutableHashSet.Create(StringComparer.Ordinal, destination.ToDisplayString(FullyQualified)));
-        return (BuildScalarBody(source.ToDisplayString(FullyQualified), destination.ToDisplayString(FullyQualified), pairs), Unmapped(destNamed, pairs));
+        var visited = ImmutableHashSet.Create(StringComparer.Ordinal, destNamed.ToDisplayString(FullyQualified));
+        var construction = BuildConstruction(compilation, source, destNamed, "typed", visited);
+        if (construction is null)
+        {
+            return null;
+        }
+
+        return (
+            BuildScalarBody(source.ToDisplayString(FullyQualified), construction.Value.Expr),
+            UnmappedFrom(destNamed, construction.Value.Mapped));
     }
 
-    private static string Unmapped(ITypeSymbol destination, List<(string Name, string Expr)> pairs)
-    {
-        var mapped = new HashSet<string>(pairs.Select(p => p.Name), StringComparer.Ordinal);
-        var unmapped = SettableProperties(destination)
-            .Where(p => !IsIgnored(p))
-            .Select(p => p.Name)
-            .Where(n => !mapped.Contains(n))
-            .Distinct(StringComparer.Ordinal)
-            .Select(n => $"'{n}'");
-        return string.Join(", ", unmapped);
-    }
-
-    private static string BuildScalarBody(string src, string dest, List<(string Name, string Expr)> pairs)
+    private static string BuildScalarBody(string src, string constructionExpr)
     {
         var sb = new StringBuilder();
         sb.AppendLine("            if (source is null) throw new global::System.ArgumentNullException(nameof(source));");
         sb.AppendLine($"            var typed = ({src})source;");
-        sb.AppendLine($"            var result = new {dest}");
-        sb.AppendLine("            {");
-        foreach (var (name, expr) in pairs)
-        {
-            sb.AppendLine($"                {name} = {expr},");
-        }
-        sb.AppendLine("            };");
+        sb.AppendLine($"            var result = {constructionExpr};");
         sb.AppendLine("            global::MapperPillow.MapperPillowTelemetry.MarkIntercepted();");
         sb.Append("            return result;");
         return sb.ToString();
     }
 
-    private static string BuildCollectionBody(ITypeSymbol destination, string destElem, string srcElem, List<(string Name, string Expr)> pairs)
+    private static string BuildCollectionBody(ITypeSymbol destination, string destElem, string srcElem, string elementConstructionExpr)
     {
         var toArray = destination is IArrayTypeSymbol;
 
@@ -170,19 +164,111 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
         sb.AppendLine($"            var result = new global::System.Collections.Generic.List<{destElem}>();");
         sb.AppendLine("            foreach (var item in typed)");
         sb.AppendLine("            {");
-        sb.AppendLine($"                result.Add(new {destElem}");
-        sb.AppendLine("                {");
-        foreach (var (name, expr) in pairs)
-        {
-            sb.AppendLine($"                    {name} = {expr},");
-        }
-        sb.AppendLine("                });");
+        sb.AppendLine($"                result.Add({elementConstructionExpr});");
         sb.AppendLine("            }");
         sb.AppendLine("            global::MapperPillow.MapperPillowTelemetry.MarkIntercepted();");
         sb.Append(toArray
             ? "            return global::System.Linq.Enumerable.ToArray(result);"
             : "            return result;");
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Builds the <c>new Destination(...) { ... }</c> expression that maps
+    /// <paramref name="destination"/> from <paramref name="accessor"/>, choosing an
+    /// object initializer when there is a parameterless constructor or a constructor
+    /// call (e.g. positional records) otherwise. Returns the expression plus the set
+    /// of destination member names it covers, or null if it cannot be constructed.
+    /// </summary>
+    private static (string Expr, ImmutableHashSet<string> Mapped)? BuildConstruction(
+        Compilation compilation, ITypeSymbol source, INamedTypeSymbol destination, string accessor, ImmutableHashSet<string> visited)
+    {
+        var display = destination.ToDisplayString(FullyQualified);
+        var pairs = BuildAssignmentPairs(compilation, source, destination, accessor, visited);
+
+        if (HasParameterlessCtor(destination))
+        {
+            var expr = pairs.Count == 0
+                ? $"new {display}()"
+                : $"new {display} {{ {string.Join(", ", pairs.Select(p => $"{p.Name} = {p.Expr}"))} }}";
+            return (expr, pairs.Select(p => p.Name).ToImmutableHashSet(StringComparer.Ordinal));
+        }
+
+        var ctor = ChooseConstructor(compilation, source, destination, accessor, visited);
+        if (ctor is null)
+        {
+            return null;
+        }
+
+        var remaining = pairs.Where(p => !ctor.Value.Consumed.Contains(p.Name)).ToList();
+        var init = remaining.Count == 0
+            ? string.Empty
+            : $" {{ {string.Join(", ", remaining.Select(p => $"{p.Name} = {p.Expr}"))} }}";
+        var mapped = pairs.Select(p => p.Name).Concat(ctor.Value.Consumed).ToImmutableHashSet(StringComparer.Ordinal);
+        return ($"new {display}({string.Join(", ", ctor.Value.Args)}){init}", mapped);
+    }
+
+    /// <summary>
+    /// Picks the public constructor with the most parameters that can all be filled
+    /// from the source (by name, case-insensitive), and returns the argument
+    /// expressions plus the destination members those parameters cover.
+    /// </summary>
+    private static (List<string> Args, ImmutableHashSet<string> Consumed)? ChooseConstructor(
+        Compilation compilation, ITypeSymbol source, INamedTypeSymbol destination, string accessor, ImmutableHashSet<string> visited)
+    {
+        var sourceByName = new Dictionary<string, IPropertySymbol>(StringComparer.OrdinalIgnoreCase);
+        foreach (var p in ReadableProperties(source).Values)
+        {
+            sourceByName[p.Name] = p;
+        }
+
+        var destByName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var p in SettableProperties(destination))
+        {
+            destByName[p.Name] = p.Name;
+        }
+
+        (List<string> Args, ImmutableHashSet<string> Consumed)? best = null;
+        var bestCount = 0;
+
+        foreach (var ctor in destination.InstanceConstructors)
+        {
+            if (ctor.DeclaredAccessibility != Accessibility.Public || ctor.Parameters.Length == 0)
+            {
+                continue;
+            }
+
+            var args = new List<string>();
+            var consumed = new List<string>();
+            var usable = true;
+
+            foreach (var param in ctor.Parameters)
+            {
+                if (!sourceByName.TryGetValue(param.Name, out var srcProp))
+                {
+                    usable = false;
+                    break;
+                }
+
+                var value = BuildValue(compilation, srcProp.Type, param.Type, $"{accessor}.{srcProp.Name}", visited);
+                if (value is null)
+                {
+                    usable = false;
+                    break;
+                }
+
+                args.Add(value);
+                consumed.Add(destByName.TryGetValue(param.Name, out var destName) ? destName : param.Name);
+            }
+
+            if (usable && ctor.Parameters.Length > bestCount)
+            {
+                best = (args, consumed.ToImmutableHashSet(StringComparer.Ordinal));
+                bestCount = ctor.Parameters.Length;
+            }
+        }
+
+        return best;
     }
 
     private static List<(string Name, string Expr)> BuildAssignmentPairs(
@@ -256,11 +342,9 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
 
         if (index == segments.Length - 1)
         {
-            // Final segment: convert to the destination type with the usual rules.
             return BuildValue(compilation, property.Type, targetType, access, visited);
         }
 
-        // Intermediate hop: navigate the object, guarding null.
         var sub = BuildMapFromExpr(compilation, property.Type, access, segments, index + 1, targetType, targetDisplay, visited);
         if (sub is null)
         {
@@ -272,6 +356,7 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
             : sub;
     }
 
+    /// <summary>The right-hand side that produces a destination value, or null if unmappable.</summary>
     private static string? BuildValue(
         Compilation compilation, ITypeSymbol source, ITypeSymbol destination, string accessor, ImmutableHashSet<string> visited)
     {
@@ -301,7 +386,7 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
                 return $"({destDisplay})global::System.Enum.Parse(typeof({destDisplay}), {accessor})";
             }
 
-            return null; // other enum combinations fall back to the runtime mapper
+            return null;
         }
 
         // Collection-valued property: map each element with LINQ (null -> null).
@@ -310,7 +395,6 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
         {
             if (EnumerableElement(source) is not INamedTypeSymbol srcElem ||
                 destCollElem is not INamedTypeSymbol destElem ||
-                !HasParameterlessCtor(destElem) ||
                 destElem.IsFileLocal || srcElem.IsFileLocal)
             {
                 return null;
@@ -324,24 +408,23 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
 
             var childVisited = visited.Add(elemDisplay);
             var lambda = $"e{childVisited.Count}";
-            var elemPairs = BuildAssignmentPairs(compilation, srcElem, destElem, lambda, childVisited);
-            if (elemPairs.Count == 0)
+            var built = BuildConstruction(compilation, srcElem, destElem, lambda, childVisited);
+            if (built is null)
             {
                 return null;
             }
 
-            var newElem = $"new {elemDisplay} {{ {string.Join(", ", elemPairs.Select(p => $"{p.Name} = {p.Expr}"))} }}";
-            var projected = $"global::System.Linq.Enumerable.Select({accessor}, {lambda} => {newElem})";
+            var projected = $"global::System.Linq.Enumerable.Select({accessor}, {lambda} => {built.Value.Expr})";
             var materialized = destination is IArrayTypeSymbol
                 ? $"global::System.Linq.Enumerable.ToArray({projected})"
                 : $"global::System.Linq.Enumerable.ToList({projected})";
             return $"{accessor} == null ? null : {materialized}";
         }
 
+        // Nested complex object: construct it recursively, guarding null and cycles.
         if (source is INamedTypeSymbol &&
             destination is INamedTypeSymbol destNamed &&
             destination.IsReferenceType &&
-            HasParameterlessCtor(destNamed) &&
             !destNamed.IsFileLocal &&
             EnumerableElement(source) is null)
         {
@@ -351,14 +434,13 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
                 return null;
             }
 
-            var pairs = BuildAssignmentPairs(compilation, source, destination, accessor, visited.Add(destDisplay));
-            if (pairs.Count == 0)
+            var built = BuildConstruction(compilation, source, destNamed, accessor, visited.Add(destDisplay));
+            if (built is null)
             {
                 return null;
             }
 
-            var body = string.Join(", ", pairs.Select(p => $"{p.Name} = {p.Expr}"));
-            return $"{accessor} is null ? null : new {destDisplay} {{ {body} }}";
+            return $"{accessor} is null ? null : {built.Value.Expr}";
         }
 
         return null;
@@ -387,7 +469,6 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
 
         var props = ReadableProperties(type);
 
-        // A member at this level that directly satisfies the (remaining) name.
         if (props.TryGetValue(name, out var direct))
         {
             var conversion = compilation.ClassifyConversion(direct.Type, targetType);
@@ -397,7 +478,6 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
             }
         }
 
-        // Otherwise split by the longest object-typed prefix and recurse into it.
         var candidates = props.Values
             .Where(s => s.Type is INamedTypeSymbol &&
                         CollectionElement(s.Type) is null &&
@@ -532,6 +612,17 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
                 }
             }
         }
+    }
+
+    private static string UnmappedFrom(ITypeSymbol destination, ImmutableHashSet<string> mapped)
+    {
+        var unmapped = SettableProperties(destination)
+            .Where(p => !IsIgnored(p))
+            .Select(p => p.Name)
+            .Where(n => !mapped.Contains(n))
+            .Distinct(StringComparer.Ordinal)
+            .Select(n => $"'{n}'");
+        return string.Join(", ", unmapped);
     }
 
     // --- emission ------------------------------------------------------------

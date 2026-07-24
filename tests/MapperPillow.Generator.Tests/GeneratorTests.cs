@@ -103,6 +103,22 @@ public class GeneratorTests
     }
 
     [Fact]
+    public void Generates_a_constructor_call_for_positional_records()
+    {
+        var result = GeneratorHarness.Run(
+            """
+            using MapperPillow;
+            namespace Demo;
+            public class Src { public string Name { get; set; } = ""; public int Age { get; set; } }
+            public record Dst(string Name, int Age);
+            public static class Run { public static Dst Do(Src s) => s.MapTo<Dst>(); }
+            """);
+
+        var generated = result.GeneratedSources.Single().SourceText.ToString();
+        Assert.Contains("new global::Demo.Dst(", generated);
+    }
+
+    [Fact]
     public void Leaves_open_generics_to_the_runtime_fallback()
     {
         // The MapTo<T> inside a user's own generic method must NOT be intercepted.
