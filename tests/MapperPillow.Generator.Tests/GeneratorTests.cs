@@ -70,6 +70,39 @@ public class GeneratorTests
     }
 
     [Fact]
+    public void MapIgnore_suppresses_the_MP0001_diagnostic()
+    {
+        var result = GeneratorHarness.Run(
+            """
+            using MapperPillow;
+            namespace Demo;
+            public class Src { public int Id { get; set; } }
+            public class Dst { public int Id { get; set; } [MapIgnore] public string Notes { get; set; } = ""; }
+            public static class Run { public static Dst Do(Src s) => s.MapTo<Dst>(); }
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, d => d.Id == "MP0001");
+    }
+
+    [Fact]
+    public void MapFrom_emits_the_explicit_source_path()
+    {
+        var result = GeneratorHarness.Run(
+            """
+            using MapperPillow;
+            namespace Demo;
+            public class Customer { public string Name { get; set; } = ""; }
+            public class Src { public Customer Customer { get; set; } = new(); }
+            public class Dst { [MapFrom("Customer.Name")] public string Buyer { get; set; } = ""; }
+            public static class Run { public static Dst Do(Src s) => s.MapTo<Dst>(); }
+            """);
+
+        var generated = result.GeneratedSources.Single().SourceText.ToString();
+        Assert.Contains("Buyer =", generated);
+        Assert.Contains(".Customer", generated);
+    }
+
+    [Fact]
     public void Leaves_open_generics_to_the_runtime_fallback()
     {
         // The MapTo<T> inside a user's own generic method must NOT be intercepted.

@@ -124,11 +124,13 @@ Chosen engine: **Roslyn incremental source generator + C# interceptors.**
   to error per project via `dotnet_diagnostic.MP0001.severity = error`. File-local
   types are skipped to the runtime fallback (they can't be referenced from the
   generated file). Analyzer release tracking files ship the rule.
-- **Milestone 4 — Escape hatches.** Minimal, opt-in customization for the unusual
-  cases (member remap, ignore, custom converter) — kept small on purpose.
-- **Milestone 5 — `ProjectTo` for `IQueryable`** (EF Core translation).
-- **Milestone 6 — Compile-time diagnostics.** Report unmapped destination members
-  as build warnings/errors with the exact member name.
+- **Milestone 5 — Escape hatches (partly done).** Opt-in per-member configuration
+  via attributes on the destination type (chosen over runtime config to stay
+  compile-time). Done: `[MapIgnore]` (skip a member; also excluded from `MP0001`) and
+  `[MapFrom("path")]` (map from an explicit, possibly nested, source path). Pending:
+  custom value converters.
+- **Milestone 6 — `ProjectTo` for `IQueryable`** (EF Core translation). A separate
+  expression-tree pipeline, not interceptors.
 
 ## Testing strategy
 

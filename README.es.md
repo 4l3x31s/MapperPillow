@@ -144,6 +144,24 @@ var dto = order.MapTo<OrderDto>();
 // dto.CustomerName == order.Customer.Name   (los intermedios nulos dan default)
 ```
 
+### Configuración por miembro
+
+Las convenciones cubren los casos comunes; para el resto, anota el tipo de destino —
+la llamada sigue limpia y todo se mantiene en tiempo de compilación.
+
+```csharp
+public sealed class OrderDto
+{
+    public int Id { get; set; }
+
+    [MapFrom("Customer.Name")]        // ruta de origen explícita (puede ser anidada)
+    public string Buyer { get; set; }
+
+    [MapIgnore]                       // nunca se mapea; no lo reporta MP0001
+    public string Notes { get; set; }
+}
+```
+
 ### Seguridad en compilación: el diagnóstico `MP0001`
 
 Si un miembro del destino no se puede mapear, obtienes una advertencia en la llamada a
@@ -174,11 +192,11 @@ cubiertas. Consulta [DESIGN.md](DESIGN.md) para la arquitectura completa.
 
 ## Limitaciones actuales
 
-MapperPillow es joven. Aún no soportado (planificado): aplanamiento de varios
-niveles, conversiones enum↔numérico, matices de proyección de nullables,
-configuración por miembro (ignorar / convertidores personalizados) y `ProjectTo`
-para `IQueryable`. Lo que el generador no puede manejar recurre a un mapeador basado
-en reflexión, así que sigue funcionando — solo que no en tiempo de compilación.
+MapperPillow es joven. Aún no soportado (planificado): conversiones enum↔numérico,
+matices de proyección de nullables, convertidores de valor personalizados y
+`ProjectTo` para `IQueryable`. Lo que el generador no puede manejar recurre a un
+mapeador basado en reflexión, así que sigue funcionando — solo que no en tiempo de
+compilación.
 
 ## Licencia
 

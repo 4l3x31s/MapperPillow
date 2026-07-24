@@ -135,6 +135,7 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
     {
         var mapped = new HashSet<string>(pairs.Select(p => p.Name), StringComparer.Ordinal);
         var unmapped = SettableProperties(destination)
+            .Where(p => !IsIgnored(p))
             .Select(p => p.Name)
             .Where(n => !mapped.Contains(n))
             .Distinct(StringComparer.Ordinal)
@@ -192,14 +193,26 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
 
         foreach (var dest in SettableProperties(destination))
         {
-            string? value = null;
-
-            if (sourceProps.TryGetValue(dest.Name, out var src))
+            if (IsIgnored(dest))
             {
-                value = BuildValue(compilation, src.Type, dest.Type, $"{accessor}.{dest.Name}", visited);
+                continue;
             }
 
-            value ??= BuildFlattenedValue(compilation, source, dest, accessor);
+            string? value;
+            var mapFrom = MapFromPath(dest);
+            if (mapFrom is not null)
+            {
+                value = BuildMapFromExpr(
+                    compilation, source, accessor, mapFrom.Split('.'), 0, dest.Type,
+                    dest.Type.ToDisplayString(FullyQualified), visited);
+            }
+            else
+            {
+                value = sourceProps.TryGetValue(dest.Name, out var src)
+                    ? BuildValue(compilation, src.Type, dest.Type, $"{accessor}.{dest.Name}", visited)
+                    : null;
+                value ??= BuildFlattenedValue(compilation, source, dest, accessor);
+            }
 
             if (value is not null)
             {
@@ -208,6 +221,55 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
         }
 
         return pairs;
+    }
+
+    private static bool IsIgnored(IPropertySymbol property) =>
+        property.GetAttributes().Any(a =>
+            a.AttributeClass?.ToDisplayString() == "MapperPillow.MapIgnoreAttribute");
+
+    private static string? MapFromPath(IPropertySymbol property)
+    {
+        var attribute = property.GetAttributes().FirstOrDefault(a =>
+            a.AttributeClass?.ToDisplayString() == "MapperPillow.MapFromAttribute");
+
+        if (attribute is null || attribute.ConstructorArguments.Length != 1)
+        {
+            return null;
+        }
+
+        var path = attribute.ConstructorArguments[0].Value as string;
+        return string.IsNullOrWhiteSpace(path) ? null : path;
+    }
+
+    /// <summary>Resolves an explicit dot-separated source path for <c>[MapFrom]</c>.</summary>
+    private static string? BuildMapFromExpr(
+        Compilation compilation, ITypeSymbol type, string accessor, string[] segments, int index,
+        ITypeSymbol targetType, string targetDisplay, ImmutableHashSet<string> visited)
+    {
+        if (index >= segments.Length ||
+            !ReadableProperties(type).TryGetValue(segments[index].Trim(), out var property))
+        {
+            return null;
+        }
+
+        var access = $"{accessor}.{property.Name}";
+
+        if (index == segments.Length - 1)
+        {
+            // Final segment: convert to the destination type with the usual rules.
+            return BuildValue(compilation, property.Type, targetType, access, visited);
+        }
+
+        // Intermediate hop: navigate the object, guarding null.
+        var sub = BuildMapFromExpr(compilation, property.Type, access, segments, index + 1, targetType, targetDisplay, visited);
+        if (sub is null)
+        {
+            return null;
+        }
+
+        return property.Type.IsReferenceType
+            ? $"{access} == null ? default({targetDisplay}) : ({sub})"
+            : sub;
     }
 
     private static string? BuildValue(

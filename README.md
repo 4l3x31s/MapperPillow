@@ -145,6 +145,24 @@ var dto = order.MapTo<OrderDto>();
 // dto.CustomerName == order.Customer.Name   (null intermediates yield default)
 ```
 
+### Per-member configuration
+
+Conventions cover the common cases; for the rest, annotate the destination type —
+the call stays clean and everything stays compile-time.
+
+```csharp
+public sealed class OrderDto
+{
+    public int Id { get; set; }
+
+    [MapFrom("Customer.Name")]        // explicit source path (may be nested)
+    public string Buyer { get; set; }
+
+    [MapIgnore]                       // never mapped; not reported by MP0001
+    public string Notes { get; set; }
+}
+```
+
 ### Build-time safety: the `MP0001` diagnostic
 
 If a destination member can't be mapped, you get a warning at the `MapTo` call —
@@ -173,11 +191,10 @@ is no runtime reflection for covered call sites. See
 
 ## Current limitations
 
-MapperPillow is young. Not yet supported (planned): multi-level flattening,
-enum↔numeric conversions, nullable-projection nuances, per-member configuration
-(ignore / custom converters), and `ProjectTo` for `IQueryable`. Anything the
-generator can't handle falls back to a reflection-based mapper, so it still works —
-just not at compile time.
+MapperPillow is young. Not yet supported (planned): enum↔numeric conversions,
+nullable-projection nuances, custom value converters, and `ProjectTo` for
+`IQueryable`. Anything the generator can't handle falls back to a reflection-based
+mapper, so it still works — just not at compile time.
 
 ---
 

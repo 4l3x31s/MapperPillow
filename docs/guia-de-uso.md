@@ -236,6 +236,36 @@ class SrcStr { public string Status { get; set; } = ""; } // Status = Enum.Parse
 
 ---
 
+## 5.1. Configuración por miembro (atributos)
+
+Cuando las convenciones no alcanzan, se configura **con atributos en el tipo de
+destino**. La llamada no cambia (`x.MapTo<Dst>()`) y todo sigue en tiempo de
+compilación.
+
+### `[MapFrom("ruta")]` — origen explícito
+
+Mapea una propiedad desde una ruta de origen concreta (puede ser anidada).
+
+```csharp
+public sealed class OrderDto
+{
+    [MapFrom("Customer.Name")]
+    public string Buyer { get; set; } = "";   // ← order.Customer.Name
+}
+```
+
+### `[MapIgnore]` — excluir una propiedad
+
+La propiedad no se mapea (queda en su valor por defecto) y **no** dispara `MP0001`.
+
+```csharp
+public sealed class OrderDto
+{
+    [MapIgnore]
+    public string Notes { get; set; } = "";
+}
+```
+
 ## 6. El diagnóstico MP0001
 
 Cuando una propiedad del destino no se puede mapear por ninguna de las reglas
@@ -281,7 +311,6 @@ solo que no se benefició de la generación en compilación.
 
 ## 9. Limitaciones actuales
 
-Planificado, aún no disponible: aplanamiento de varios niveles, conversiones
-enum↔numérico, configuración por miembro (ignorar, convertidores personalizados) y
-`ProjectTo` para `IQueryable`. Consulta el [DESIGN.md](../DESIGN.md) para la hoja de
-ruta completa.
+Planificado, aún no disponible: conversiones enum↔numérico, convertidores de valor
+personalizados y `ProjectTo` para `IQueryable`. Consulta el [DESIGN.md](../DESIGN.md)
+para la hoja de ruta completa.
