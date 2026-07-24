@@ -109,8 +109,10 @@ Chosen engine: **Roslyn incremental source generator + C# interceptors.**
   - Flattening (DONE): a destination member with no direct match is resolved
     against a nested source path by splitting its PascalCase name (longest matching
     prefix wins), one level deep, with null intermediates yielding `default`.
-  - Pending: multi-level flattening, collection-valued properties, nullable
-    handling, enums.
+  - Collection-valued properties (DONE): a property whose type is a collection maps
+    each element via `Enumerable.Select(...).ToList()/.ToArray()` (null -> null),
+    reusing the element mapping rules; unique lambda variable per nesting level.
+  - Pending: multi-level flattening, enums, nullable handling.
 
 - **Milestone 4 — Compile-time diagnostics (DONE).** `MP0001` warns at the call
   site when a destination member stays unmapped, naming it — the replacement for

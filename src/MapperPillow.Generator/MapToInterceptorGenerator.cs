@@ -219,12 +219,45 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
             return accessor;
         }
 
+        // Collection-valued property: map each element with LINQ (null -> null).
+        var destCollElem = CollectionElement(destination);
+        if (destCollElem is not null)
+        {
+            if (EnumerableElement(source) is not INamedTypeSymbol srcElem ||
+                destCollElem is not INamedTypeSymbol destElem ||
+                !HasParameterlessCtor(destElem) ||
+                destElem.IsFileLocal || srcElem.IsFileLocal)
+            {
+                return null;
+            }
+
+            var elemDisplay = destElem.ToDisplayString(FullyQualified);
+            if (visited.Contains(elemDisplay) || visited.Count > MaxNestingDepth)
+            {
+                return null;
+            }
+
+            var childVisited = visited.Add(elemDisplay);
+            var lambda = $"e{childVisited.Count}";
+            var elemPairs = BuildAssignmentPairs(compilation, srcElem, destElem, lambda, childVisited);
+            if (elemPairs.Count == 0)
+            {
+                return null;
+            }
+
+            var newElem = $"new {elemDisplay} {{ {string.Join(", ", elemPairs.Select(p => $"{p.Name} = {p.Expr}"))} }}";
+            var projected = $"global::System.Linq.Enumerable.Select({accessor}, {lambda} => {newElem})";
+            var materialized = destination is IArrayTypeSymbol
+                ? $"global::System.Linq.Enumerable.ToArray({projected})"
+                : $"global::System.Linq.Enumerable.ToList({projected})";
+            return $"{accessor} == null ? null : {materialized}";
+        }
+
         if (source is INamedTypeSymbol &&
             destination is INamedTypeSymbol destNamed &&
             destination.IsReferenceType &&
             HasParameterlessCtor(destNamed) &&
             !destNamed.IsFileLocal &&
-            CollectionElement(destination) is null &&
             EnumerableElement(source) is null)
         {
             var destDisplay = destination.ToDisplayString(FullyQualified);
