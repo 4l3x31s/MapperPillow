@@ -199,7 +199,7 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
                 value = BuildValue(compilation, src.Type, dest.Type, $"{accessor}.{dest.Name}", visited);
             }
 
-            value ??= BuildFlattenedValue(compilation, sourceProps.Values, dest, accessor);
+            value ??= BuildFlattenedValue(compilation, source, dest, accessor);
 
             if (value is not null)
             {
@@ -303,33 +303,56 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
     }
 
     private static string? BuildFlattenedValue(
-        Compilation compilation, IEnumerable<IPropertySymbol> sourceProps, IPropertySymbol dest, string accessor)
+        Compilation compilation, ITypeSymbol source, IPropertySymbol dest, string accessor)
     {
-        var candidates = sourceProps
+        var targetDisplay = dest.Type.ToDisplayString(FullyQualified);
+        return FlattenExpr(compilation, source, accessor, dest.Name, dest.Type, targetDisplay, depth: 0);
+    }
+
+    /// <summary>
+    /// Resolves <paramref name="name"/> against <paramref name="type"/> by walking a
+    /// nested member path (e.g. <c>CustomerAddressCity</c> → <c>Customer.Address.City</c>),
+    /// null-guarding each object hop. Longest matching prefix wins at every level.
+    /// </summary>
+    private static string? FlattenExpr(
+        Compilation compilation, ITypeSymbol type, string accessor, string name,
+        ITypeSymbol targetType, string targetDisplay, int depth)
+    {
+        if (depth > MaxNestingDepth)
+        {
+            return null;
+        }
+
+        var props = ReadableProperties(type);
+
+        // A member at this level that directly satisfies the (remaining) name.
+        if (props.TryGetValue(name, out var direct))
+        {
+            var conversion = compilation.ClassifyConversion(direct.Type, targetType);
+            if (conversion.IsIdentity || conversion.IsImplicit)
+            {
+                return $"{accessor}.{name}";
+            }
+        }
+
+        // Otherwise split by the longest object-typed prefix and recurse into it.
+        var candidates = props.Values
             .Where(s => s.Type is INamedTypeSymbol &&
                         CollectionElement(s.Type) is null &&
-                        dest.Name.Length > s.Name.Length &&
-                        dest.Name.StartsWith(s.Name, StringComparison.Ordinal))
+                        name.Length > s.Name.Length &&
+                        name.StartsWith(s.Name, StringComparison.Ordinal))
             .OrderByDescending(s => s.Name.Length);
 
         foreach (var outer in candidates)
         {
-            var remainder = dest.Name.Substring(outer.Name.Length);
-            if (!ReadableProperties(outer.Type).TryGetValue(remainder, out var inner))
+            var remainder = name.Substring(outer.Name.Length);
+            var sub = FlattenExpr(compilation, outer.Type, $"{accessor}.{outer.Name}", remainder, targetType, targetDisplay, depth + 1);
+            if (sub is not null)
             {
-                continue;
+                return outer.Type.IsReferenceType
+                    ? $"{accessor}.{outer.Name} == null ? default({targetDisplay}) : ({sub})"
+                    : sub;
             }
-
-            var conversion = compilation.ClassifyConversion(inner.Type, dest.Type);
-            if (!conversion.IsIdentity && !conversion.IsImplicit)
-            {
-                continue;
-            }
-
-            var outerAccess = $"{accessor}.{outer.Name}";
-            return outer.Type.IsReferenceType
-                ? $"{outerAccess} == null ? default : {outerAccess}.{remainder}"
-                : $"{outerAccess}.{remainder}";
         }
 
         return null;

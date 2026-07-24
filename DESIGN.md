@@ -108,14 +108,15 @@ Chosen engine: **Roslyn incremental source generator + C# interceptors.**
     Dest { ... }`), with cycle protection (visited set) and a depth cap.
   - Flattening (DONE): a destination member with no direct match is resolved
     against a nested source path by splitting its PascalCase name (longest matching
-    prefix wins), one level deep, with null intermediates yielding `default`.
+    prefix wins at every level), now **multi-level** (`Customer.Address.City` →
+    `CustomerAddressCity`), null-guarding each object hop with `default(T)`.
   - Collection-valued properties (DONE): a property whose type is a collection maps
     each element via `Enumerable.Select(...).ToList()/.ToArray()` (null -> null),
     reusing the element mapping rules; unique lambda variable per nesting level.
   - Enums (DONE): enum <-> enum by value (`(Dest)src`), enum -> string
     (`.ToString()`), string -> enum (`Enum.Parse`). Other enum/numeric combinations
     fall back to the runtime mapper.
-  - Pending: multi-level flattening, enum<->numeric, nullable handling.
+  - Pending: enum<->numeric, nullable handling.
 
 - **Milestone 4 — Compile-time diagnostics (DONE).** `MP0001` warns at the call
   site when a destination member stays unmapped, naming it — the replacement for
