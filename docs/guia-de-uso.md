@@ -203,6 +203,37 @@ var dto = order.MapTo<OrderDto>();
 Detalles: gana el prefijo **más largo** que coincida (para desambiguar `Customer` de
 `CustomerAccount`, por ejemplo), y por ahora resuelve **un nivel** de anidamiento.
 
+### e) Propiedades que son colecciones
+
+Si una propiedad del destino es una colección, se mapea elemento por elemento
+(protegiendo los nulos).
+
+```csharp
+class Item    { public int Id { get; set; } public string Name { get; set; } = ""; }
+class ItemDto { public int Id { get; set; } public string Name { get; set; } = ""; }
+class Order    { public int Id { get; set; } public List<Item> Items { get; set; } = new(); }
+class OrderDto { public int Id { get; set; } public List<ItemDto> Items { get; set; } = new(); }
+
+var dto = order.MapTo<OrderDto>();
+// dto.Items tiene un ItemDto por cada Item; si Items era null, dto.Items es null.
+```
+
+### f) Enums
+
+Se soportan tres conversiones habituales:
+
+```csharp
+// enum -> otro enum (por valor)
+class Src { public SourceStatus Status { get; set; } }
+class Dst { public TargetStatus Status { get; set; } }   // Status = (TargetStatus)src.Status
+
+// enum -> string
+class DstStr { public string Status { get; set; } = ""; } // Status = src.Status.ToString()
+
+// string -> enum
+class SrcStr { public string Status { get; set; } = ""; } // Status = Enum.Parse(...)
+```
+
 ---
 
 ## 6. El diagnóstico MP0001
@@ -250,7 +281,7 @@ solo que no se benefició de la generación en compilación.
 
 ## 9. Limitaciones actuales
 
-Planificado, aún no disponible: conversiones de enums, aplanamiento de varios niveles,
-propiedades que son colecciones, configuración por miembro (ignorar, convertidores
-personalizados) y `ProjectTo` para `IQueryable`. Consulta el
-[DESIGN.md](../DESIGN.md) para la hoja de ruta completa.
+Planificado, aún no disponible: aplanamiento de varios niveles, conversiones
+enum↔numérico, configuración por miembro (ignorar, convertidores personalizados) y
+`ProjectTo` para `IQueryable`. Consulta el [DESIGN.md](../DESIGN.md) para la hoja de
+ruta completa.

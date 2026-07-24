@@ -34,7 +34,8 @@ mapear en tiempo de compilación**, no en tiempo de ejecución.
 - **Tiempo de compilación** — el mapeo es código generado; sin reflexión en la ruta
   caliente.
 - **Convenciones que funcionan** — propiedades con el mismo nombre, colecciones,
-  arrays, objetos anidados y aplanamiento (`Order.Customer.Name` → `CustomerName`).
+  arrays, objetos anidados, propiedades que son colecciones, enums y aplanamiento
+  (`Order.Customer.Name` → `CustomerName`).
 - **Seguridad en compilación** — el diagnóstico `MP0001` nombra cualquier miembro del
   destino que quede sin mapear. Puedes tratarlo como error en proyectos estrictos.
 - **Auditable** — el mapeo generado es C# normal que puedes inspeccionar y depurar.
@@ -173,12 +174,11 @@ cubiertas. Consulta [DESIGN.md](DESIGN.md) para la arquitectura completa.
 
 ## Limitaciones actuales
 
-MapperPillow es joven. Aún no soportado (planificado): conversiones de enums,
-aplanamiento de varios niveles, propiedades que son colecciones, matices de
-proyección de nullables, configuración por miembro (ignorar / convertidores
-personalizados) y `ProjectTo` para `IQueryable`. Lo que el generador no puede manejar
-recurre a un mapeador basado en reflexión, así que sigue funcionando — solo que no en
-tiempo de compilación.
+MapperPillow es joven. Aún no soportado (planificado): aplanamiento de varios
+niveles, conversiones enum↔numérico, matices de proyección de nullables,
+configuración por miembro (ignorar / convertidores personalizados) y `ProjectTo`
+para `IQueryable`. Lo que el generador no puede manejar recurre a un mapeador basado
+en reflexión, así que sigue funcionando — solo que no en tiempo de compilación.
 
 ## Licencia
 

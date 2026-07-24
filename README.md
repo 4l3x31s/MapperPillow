@@ -32,7 +32,8 @@ at runtime.
 - **Zero ceremony** — a single `MapTo<T>()` extension, discovered automatically.
 - **Compile-time** — mapping is generated code; no reflection on the hot path.
 - **Conventions that just work** — same-name properties, collections, arrays,
-  nested objects, and flattening (`Order.Customer.Name` → `CustomerName`).
+  nested objects, collection-valued properties, enums, and flattening
+  (`Order.Customer.Name` → `CustomerName`).
 - **Build-time safety** — the `MP0001` diagnostic names any destination member left
   unmapped. Opt into treating it as an error for strict projects.
 - **Auditable** — the generated mapping is plain C# you can inspect and step through.
@@ -172,11 +173,11 @@ is no runtime reflection for covered call sites. See
 
 ## Current limitations
 
-MapperPillow is young. Not yet supported (planned): enum conversions, multi-level
-flattening, collection-valued properties, nullable-projection nuances, per-member
-configuration (ignore / custom converters), and `ProjectTo` for `IQueryable`.
-Anything the generator can't handle falls back to a reflection-based mapper, so it
-still works — just not at compile time.
+MapperPillow is young. Not yet supported (planned): multi-level flattening,
+enum↔numeric conversions, nullable-projection nuances, per-member configuration
+(ignore / custom converters), and `ProjectTo` for `IQueryable`. Anything the
+generator can't handle falls back to a reflection-based mapper, so it still works —
+just not at compile time.
 
 ---
 
