@@ -285,8 +285,13 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
             }
 
             string? value;
+            var converter = MapConverter(dest);
             var mapFrom = MapFromPath(dest);
-            if (mapFrom is not null)
+            if (converter is not null)
+            {
+                value = BuildConverterValue(compilation, source, dest, accessor, converter);
+            }
+            else if (mapFrom is not null)
             {
                 value = BuildMapFromExpr(
                     compilation, source, accessor, mapFrom.Split('.'), 0, dest.Type,
@@ -325,6 +330,53 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
 
         var path = attribute.ConstructorArguments[0].Value as string;
         return string.IsNullOrWhiteSpace(path) ? null : path;
+    }
+
+    private static INamedTypeSymbol? MapConverter(IPropertySymbol property)
+    {
+        var attribute = property.GetAttributes().FirstOrDefault(a =>
+            a.AttributeClass?.ToDisplayString() == "MapperPillow.MapConvertAttribute");
+
+        if (attribute is null || attribute.ConstructorArguments.Length != 1)
+        {
+            return null;
+        }
+
+        return attribute.ConstructorArguments[0].Value as INamedTypeSymbol;
+    }
+
+    /// <summary>Emits <c>new Converter().Convert(source.Member)</c> for <c>[MapConvert]</c>.</summary>
+    private static string? BuildConverterValue(
+        Compilation compilation, ITypeSymbol source, IPropertySymbol dest, string accessor, INamedTypeSymbol converter)
+    {
+        if (converter.IsFileLocal || !HasParameterlessCtor(converter))
+        {
+            return null;
+        }
+
+        var contract = converter.AllInterfaces.FirstOrDefault(i =>
+            i.Name == "IValueConverter" &&
+            i.ContainingNamespace?.ToDisplayString() == "MapperPillow" &&
+            i.TypeArguments.Length == 2);
+        if (contract is null)
+        {
+            return null;
+        }
+
+        if (!ReadableProperties(source).TryGetValue(dest.Name, out var srcProp))
+        {
+            return null;
+        }
+
+        var toConverter = compilation.ClassifyConversion(srcProp.Type, contract.TypeArguments[0]);
+        var toDestination = compilation.ClassifyConversion(contract.TypeArguments[1], dest.Type);
+        if ((!toConverter.IsIdentity && !toConverter.IsImplicit) ||
+            (!toDestination.IsIdentity && !toDestination.IsImplicit))
+        {
+            return null;
+        }
+
+        return $"new {converter.ToDisplayString(FullyQualified)}().Convert({accessor}.{srcProp.Name})";
     }
 
     /// <summary>Resolves an explicit dot-separated source path for <c>[MapFrom]</c>.</summary>

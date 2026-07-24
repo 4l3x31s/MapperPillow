@@ -159,6 +159,9 @@ public sealed class OrderDto
 
     [MapIgnore]                       // nunca se mapea; no lo reporta MP0001
     public string Notes { get; set; }
+
+    [MapConvert(typeof(CentsToDollars))]   // IValueConverter<int, string> propio
+    public string Price { get; set; }
 }
 ```
 
@@ -192,11 +195,10 @@ cubiertas. Consulta [DESIGN.md](DESIGN.md) para la arquitectura completa.
 
 ## Limitaciones actuales
 
-MapperPillow es joven. Aún no soportado (planificado): conversiones enum↔numérico,
-matices de proyección de nullables, convertidores de valor personalizados y
-`ProjectTo` para `IQueryable`. Lo que el generador no puede manejar recurre a un
-mapeador basado en reflexión, así que sigue funcionando — solo que no en tiempo de
-compilación.
+MapperPillow es joven. El hueco principal es `ProjectTo` para `IQueryable`
+(traducción a EF Core), que es un pipeline de árboles de expresión aparte. Lo que el
+generador no puede manejar recurre a un mapeador basado en reflexión, así que sigue
+funcionando — solo que no en tiempo de compilación.
 
 ## Licencia
 

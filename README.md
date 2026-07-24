@@ -160,6 +160,9 @@ public sealed class OrderDto
 
     [MapIgnore]                       // never mapped; not reported by MP0001
     public string Notes { get; set; }
+
+    [MapConvert(typeof(CentsToDollars))]   // custom IValueConverter<int, string>
+    public string Price { get; set; }
 }
 ```
 
@@ -191,10 +194,10 @@ is no runtime reflection for covered call sites. See
 
 ## Current limitations
 
-MapperPillow is young. Not yet supported (planned): enum↔numeric conversions,
-nullable-projection nuances, custom value converters, and `ProjectTo` for
-`IQueryable`. Anything the generator can't handle falls back to a reflection-based
-mapper, so it still works — just not at compile time.
+MapperPillow is young. The main gap is `ProjectTo` for `IQueryable` (EF Core
+translation), which is a separate expression-tree pipeline. Anything the generator
+can't handle falls back to a reflection-based mapper, so it still works — just not at
+compile time.
 
 ---
 

@@ -123,7 +123,9 @@ Chosen engine: **Roslyn incremental source generator + C# interceptors.**
     (`new Dest(a, b) { ... }`), matching parameters to source members by name
     (case-insensitive) and filling remaining settable members via the initializer.
     Unified `BuildConstruction` is used for scalar, nested, and collection elements.
-  - Pending: custom value converters.
+  - Custom value converters (DONE): `[MapConvert(typeof(C))]` where
+    `C : IValueConverter<TSource, TDestination>` — emits `new C().Convert(source.Member)`
+    after validating the interface, a parameterless ctor, and type compatibility.
 
 - **Milestone 4 — Compile-time diagnostics (DONE).** `MP0001` warns at the call
   site when a destination member stays unmapped, naming it — the replacement for
@@ -131,11 +133,11 @@ Chosen engine: **Roslyn incremental source generator + C# interceptors.**
   to error per project via `dotnet_diagnostic.MP0001.severity = error`. File-local
   types are skipped to the runtime fallback (they can't be referenced from the
   generated file). Analyzer release tracking files ship the rule.
-- **Milestone 5 — Escape hatches (partly done).** Opt-in per-member configuration
-  via attributes on the destination type (chosen over runtime config to stay
-  compile-time). Done: `[MapIgnore]` (skip a member; also excluded from `MP0001`) and
-  `[MapFrom("path")]` (map from an explicit, possibly nested, source path). Pending:
-  custom value converters.
+- **Milestone 5 — Escape hatches (DONE).** Opt-in per-member configuration via
+  attributes on the destination type (chosen over runtime config to stay
+  compile-time): `[MapIgnore]` (skip a member; also excluded from `MP0001`),
+  `[MapFrom("path")]` (map from an explicit, possibly nested, source path), and
+  `[MapConvert(typeof(C))]` with `C : IValueConverter<TSource, TDestination>`.
 - **Milestone 6 — `ProjectTo` for `IQueryable`** (EF Core translation). A separate
   expression-tree pipeline, not interceptors.
 

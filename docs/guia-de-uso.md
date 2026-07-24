@@ -267,6 +267,24 @@ public sealed class OrderDto
 }
 ```
 
+### `[MapConvert(typeof(...))]` — convertidor personalizado
+
+Transforma el valor del miembro con nombre igual usando un convertidor propio que
+implementa `IValueConverter<TSource, TDestination>` (con constructor sin parámetros).
+
+```csharp
+public sealed class CentsToDollars : IValueConverter<int, string>
+{
+    public string Convert(int source) => (source / 100m).ToString("0.00");
+}
+
+public sealed class ProductDto
+{
+    [MapConvert(typeof(CentsToDollars))]
+    public string Price { get; set; } = "";   // ← new CentsToDollars().Convert(src.Price)
+}
+```
+
 ## 6. El diagnóstico MP0001
 
 Cuando una propiedad del destino no se puede mapear por ninguna de las reglas
@@ -312,6 +330,5 @@ solo que no se benefició de la generación en compilación.
 
 ## 9. Limitaciones actuales
 
-Planificado, aún no disponible: conversiones enum↔numérico, convertidores de valor
-personalizados y `ProjectTo` para `IQueryable`. Consulta el [DESIGN.md](../DESIGN.md)
-para la hoja de ruta completa.
+El hueco principal es `ProjectTo` para `IQueryable` (traducción a EF Core), un
+pipeline aparte. Consulta el [DESIGN.md](../DESIGN.md) para la hoja de ruta completa.
