@@ -103,8 +103,11 @@ Chosen engine: **Roslyn incremental source generator + C# interceptors.**
   - Collections/arrays (DONE): `List<T>`, arrays, and `IEnumerable/IList/ICollection/
     IReadOnlyList/IReadOnlyCollection<T>` destinations, mapping each element by the
     scalar rules. Source may be any `IEnumerable<T>` or array.
-  - Pending: nested complex objects, flattening (`Order.Customer.Name` →
-    `CustomerName`), nullable handling, enums.
+  - Nested complex objects (DONE): a destination property whose type is another
+    mappable reference type is mapped recursively (`accessor is null ? null : new
+    Dest { ... }`), with cycle protection (visited set) and a depth cap.
+  - Pending: flattening (`Order.Customer.Name` → `CustomerName`), collection-valued
+    properties, nullable handling, enums.
 - **Milestone 4 — Escape hatches.** Minimal, opt-in customization for the unusual
   cases (member remap, ignore, custom converter) — kept small on purpose.
 - **Milestone 5 — `ProjectTo` for `IQueryable`** (EF Core translation).
