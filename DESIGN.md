@@ -112,7 +112,10 @@ Chosen engine: **Roslyn incremental source generator + C# interceptors.**
   - Collection-valued properties (DONE): a property whose type is a collection maps
     each element via `Enumerable.Select(...).ToList()/.ToArray()` (null -> null),
     reusing the element mapping rules; unique lambda variable per nesting level.
-  - Pending: multi-level flattening, enums, nullable handling.
+  - Enums (DONE): enum <-> enum by value (`(Dest)src`), enum -> string
+    (`.ToString()`), string -> enum (`Enum.Parse`). Other enum/numeric combinations
+    fall back to the runtime mapper.
+  - Pending: multi-level flattening, enum<->numeric, nullable handling.
 
 - **Milestone 4 — Compile-time diagnostics (DONE).** `MP0001` warns at the call
   site when a destination member stays unmapped, naming it — the replacement for

@@ -219,6 +219,29 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
             return accessor;
         }
 
+        // Enums: enum <-> enum (by value), enum -> string, string -> enum.
+        if (source.TypeKind == TypeKind.Enum || destination.TypeKind == TypeKind.Enum)
+        {
+            var destDisplay = destination.ToDisplayString(FullyQualified);
+
+            if (source.TypeKind == TypeKind.Enum && destination.TypeKind == TypeKind.Enum)
+            {
+                return $"({destDisplay}){accessor}";
+            }
+
+            if (source.TypeKind == TypeKind.Enum && destination.SpecialType == SpecialType.System_String)
+            {
+                return $"{accessor}.ToString()";
+            }
+
+            if (source.SpecialType == SpecialType.System_String && destination.TypeKind == TypeKind.Enum)
+            {
+                return $"({destDisplay})global::System.Enum.Parse(typeof({destDisplay}), {accessor})";
+            }
+
+            return null; // other enum combinations fall back to the runtime mapper
+        }
+
         // Collection-valued property: map each element with LINQ (null -> null).
         var destCollElem = CollectionElement(destination);
         if (destCollElem is not null)
