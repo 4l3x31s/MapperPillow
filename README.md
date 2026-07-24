@@ -2,6 +2,8 @@
 
 **A comfortable, convention-first object mapper for .NET — compile-time and zero-ceremony.**
 
+📖 Languages: **English** · [Español](README.es.md) — Full guide: [docs/guia-de-uso.md](docs/guia-de-uso.md)
+
 MapperPillow maps one object to another without the boilerplate. Properties that
 match by name map on their own; you only touch configuration for the unusual cases.
 Under the hood it is a Roslyn **source generator** + **C# interceptors**, so mapping
