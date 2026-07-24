@@ -92,10 +92,13 @@ Chosen engine: **Roslyn incremental source generator + C# interceptors.**
   discovering real `MapTo<T>()` call sites; passing tests + runnable sample.
 - **Milestone 1 — Discovery pipeline (DONE).** Generator finds every `MapTo<T>()`
   call and resolves its type pair. Currently emits a summary of discovered maps.
-- **Milestone 2 — Interceptor emission.** Replace each discovered call site with a
-  generated interceptor doing same-name property assignment. Retire reflection for
-  covered sites; keep it only as a fallback. This is where "no runtime reflection"
-  becomes real.
+- **Milestone 2 — Interceptor emission (DONE).** Each discovered `MapTo<T>()` call
+  site is replaced with a generated interceptor (`GetInterceptableLocation` →
+  `[InterceptsLocation]`) that constructs the destination and assigns same-name,
+  implicitly-convertible properties — zero runtime reflection. Open generics (the
+  `MapTo<T>` inside the `Map<T>` alias) are skipped and left to the fallback. This
+  is where "no runtime reflection" became real. Verified by a telemetry-based test
+  that fails if a call is served by reflection instead of the interceptor.
 - **Milestone 3 — Richer mapping.** Collections/arrays, nested objects, flattening
   (`Order.Customer.Name` → `CustomerName`), nullable handling, enums.
 - **Milestone 4 — Escape hatches.** Minimal, opt-in customization for the unusual
@@ -104,9 +107,10 @@ Chosen engine: **Roslyn incremental source generator + C# interceptors.**
 - **Milestone 6 — Compile-time diagnostics.** Report unmapped destination members
   as build warnings/errors with the exact member name.
 
-## 7. Current status (v0)
+## 7. Current status
 
-Runtime mapping is done by `ReflectionMapper` as a **temporary baseline** so the
-library is demonstrably working today. The design commitment is that Milestone 2
-replaces this with generated interceptors; reflection then survives only as a
-safety net for not-yet-covered call sites.
+Direct `MapTo<TDestination>()` calls on concrete types are served by generated
+compile-time interceptors (no reflection). `ReflectionMapper` now survives only as
+a fallback for call sites the generator does not cover — notably the `Map<T>`
+courtesy alias (open generic) and any dynamically-typed source. Retiring those
+remaining reflection paths is future work (see milestones 3+).

@@ -6,6 +6,8 @@
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <IsPackable>false</IsPackable>
+    <!-- Opt in to interceptors emitted by the MapperPillow generator. -->
+    <InterceptorsNamespaces>$(InterceptorsNamespaces);MapperPillow.Generated</InterceptorsNamespaces>
   </PropertyGroup>
 
   <ItemGroup>
@@ -16,6 +18,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\MapperPillow\MapperPillow.csproj" />
+    <!-- Wire the generator so interceptors are emitted for this project's call sites. -->
+    <ProjectReference Include="..\..\src\MapperPillow.Generator\MapperPillow.Generator.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>
