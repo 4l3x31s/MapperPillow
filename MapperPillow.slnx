@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="DESIGN.md" />
+    <File Path="README.md" />
+    <File Path="LICENSE" />
+  </Folder>
+  <Project Path="src/MapperPillow/MapperPillow.csproj" />
+  <Project Path="src/MapperPillow.Generator/MapperPillow.Generator.csproj" />
+  <Project Path="tests/MapperPillow.Tests/MapperPillow.Tests.csproj" />
+  <Project Path="samples/MapperPillow.Sample/MapperPillow.Sample.csproj" />
+</Solution>

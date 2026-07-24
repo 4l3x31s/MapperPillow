@@ -1,0 +1,13 @@
+## .NET
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+artifacts/
+*.user
+.vs/
+TestResults/
+*.trx
+
+## Rider / VS
+.idea/
