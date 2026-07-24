@@ -112,9 +112,12 @@ Chosen engine: **Roslyn incremental source generator + C# interceptors.**
   - Pending: multi-level flattening, collection-valued properties, nullable
     handling, enums.
 
-- **Milestone 4 — Compile-time diagnostics.** Report destination members that stay
-  unmapped as build warnings, naming the exact member — the replacement for
-  AutoMapper's runtime `AssertConfigurationIsValid()`.
+- **Milestone 4 — Compile-time diagnostics (DONE).** `MP0001` warns at the call
+  site when a destination member stays unmapped, naming it — the replacement for
+  AutoMapper's runtime `AssertConfigurationIsValid()`. Warning by default; escalate
+  to error per project via `dotnet_diagnostic.MP0001.severity = error`. File-local
+  types are skipped to the runtime fallback (they can't be referenced from the
+  generated file). Analyzer release tracking files ship the rule.
 - **Milestone 4 — Escape hatches.** Minimal, opt-in customization for the unusual
   cases (member remap, ignore, custom converter) — kept small on purpose.
 - **Milestone 5 — `ProjectTo` for `IQueryable`** (EF Core translation).

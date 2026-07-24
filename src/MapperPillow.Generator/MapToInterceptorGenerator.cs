@@ -14,16 +14,25 @@ namespace MapperPillow.Generator;
 /// <summary>
 /// Replaces each concrete <c>source.MapTo&lt;TDestination&gt;()</c> call with a
 /// compile-time interceptor — no runtime reflection. Supports scalar object
-/// mapping (same-name, implicitly-convertible properties), nested complex objects
-/// (mapped recursively with a null guard), and collection mapping (<c>List&lt;T&gt;</c>,
-/// arrays, and the common read-only/list interfaces). Call sites the generator
-/// cannot handle are left to the runtime fallback.
+/// mapping, nested complex objects (recursive, null-guarded), one-level flattening
+/// (<c>CustomerName</c> → <c>Customer.Name</c>) and collection mapping. Destination
+/// members left unmapped are reported as MP0001 warnings. Call sites the generator
+/// cannot handle at all are left to the runtime fallback.
 /// </summary>
 [Generator]
 public sealed class MapToInterceptorGenerator : IIncrementalGenerator
 {
     private const int MaxNestingDepth = 6;
     private static readonly SymbolDisplayFormat FullyQualified = SymbolDisplayFormat.FullyQualifiedFormat;
+
+    private static readonly DiagnosticDescriptor UnmappedMember = new(
+        id: "MP0001",
+        title: "Unmapped destination member",
+        messageFormat: "MapTo<{0}> leaves destination member(s) unmapped: {1}",
+        category: "MapperPillow",
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true,
+        description: "A destination property has no matching source member. Map it, or ignore it once member configuration is available.");
 
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
@@ -65,8 +74,10 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
         var srcType = ctx.SemanticModel.GetTypeInfo(memberAccess.Expression, ct).Type;
         if (destType is null || srcType is null ||
             destType is ITypeParameterSymbol || srcType is ITypeParameterSymbol ||
-            destType.TypeKind == TypeKind.Error || srcType.TypeKind == TypeKind.Error)
+            destType.TypeKind == TypeKind.Error || srcType.TypeKind == TypeKind.Error ||
+            IsFileLocal(destType) || IsFileLocal(srcType))
         {
+            // File-local types cannot be referenced from the generated file; fall back.
             return null;
         }
 
@@ -76,19 +87,22 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
             return null;
         }
 
-        var body = BuildBody(ctx.SemanticModel.Compilation, srcType, destType);
-        if (body is null)
+        var plan = BuildBody(ctx.SemanticModel.Compilation, srcType, destType);
+        if (plan is null)
         {
             return null; // not mappable here — leave it to the runtime fallback
         }
 
         return new CallSite(
             destType.ToDisplayString(FullyQualified),
-            body,
-            location.GetInterceptsLocationAttributeSyntax());
+            destType.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
+            plan.Value.Body,
+            plan.Value.UnmappedCsv,
+            location.GetInterceptsLocationAttributeSyntax(),
+            invocation.GetLocation());
     }
 
-    private static string? BuildBody(Compilation compilation, ITypeSymbol source, ITypeSymbol destination)
+    private static (string Body, string UnmappedCsv)? BuildBody(Compilation compilation, ITypeSymbol source, ITypeSymbol destination)
     {
         var destElement = CollectionElement(destination);
         if (destElement is not null)
@@ -96,12 +110,14 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
             var srcElement = EnumerableElement(source);
             if (srcElement is not INamedTypeSymbol srcElem ||
                 destElement is not INamedTypeSymbol destElem ||
-                !HasParameterlessCtor(destElem))
+                !HasParameterlessCtor(destElem) ||
+                IsFileLocal(destElem) || IsFileLocal(srcElem))
             {
                 return null;
             }
 
-            return BuildCollectionBody(compilation, srcElem, destination, destElem);
+            var elemPairs = BuildAssignmentPairs(compilation, srcElem, destElem, "item", ImmutableHashSet.Create(StringComparer.Ordinal, destElem.ToDisplayString(FullyQualified)));
+            return (BuildCollectionBody(destination, destElem.ToDisplayString(FullyQualified), srcElem.ToDisplayString(FullyQualified), elemPairs), Unmapped(destElem, elemPairs));
         }
 
         if (source is not INamedTypeSymbol ||
@@ -111,23 +127,31 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
             return null;
         }
 
-        return BuildScalarBody(compilation, source, destination);
+        var pairs = BuildAssignmentPairs(compilation, source, destination, "typed", ImmutableHashSet.Create(StringComparer.Ordinal, destination.ToDisplayString(FullyQualified)));
+        return (BuildScalarBody(source.ToDisplayString(FullyQualified), destination.ToDisplayString(FullyQualified), pairs), Unmapped(destNamed, pairs));
     }
 
-    private static string BuildScalarBody(Compilation compilation, ITypeSymbol source, ITypeSymbol destination)
+    private static string Unmapped(ITypeSymbol destination, List<(string Name, string Expr)> pairs)
     {
-        var src = source.ToDisplayString(FullyQualified);
-        var dest = destination.ToDisplayString(FullyQualified);
-        var pairs = BuildAssignmentPairs(compilation, source, destination, "typed", ImmutableHashSet.Create(StringComparer.Ordinal, dest));
+        var mapped = new HashSet<string>(pairs.Select(p => p.Name), StringComparer.Ordinal);
+        var unmapped = SettableProperties(destination)
+            .Select(p => p.Name)
+            .Where(n => !mapped.Contains(n))
+            .Distinct(StringComparer.Ordinal)
+            .Select(n => $"'{n}'");
+        return string.Join(", ", unmapped);
+    }
 
+    private static string BuildScalarBody(string src, string dest, List<(string Name, string Expr)> pairs)
+    {
         var sb = new StringBuilder();
         sb.AppendLine("            if (source is null) throw new global::System.ArgumentNullException(nameof(source));");
         sb.AppendLine($"            var typed = ({src})source;");
         sb.AppendLine($"            var result = new {dest}");
         sb.AppendLine("            {");
-        foreach (var pair in pairs)
+        foreach (var (name, expr) in pairs)
         {
-            sb.AppendLine($"                {pair},");
+            sb.AppendLine($"                {name} = {expr},");
         }
         sb.AppendLine("            };");
         sb.AppendLine("            global::MapperPillow.MapperPillowTelemetry.MarkIntercepted();");
@@ -135,13 +159,9 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
         return sb.ToString();
     }
 
-    private static string BuildCollectionBody(
-        Compilation compilation, ITypeSymbol sourceElement, ITypeSymbol destination, ITypeSymbol destinationElement)
+    private static string BuildCollectionBody(ITypeSymbol destination, string destElem, string srcElem, List<(string Name, string Expr)> pairs)
     {
-        var srcElem = sourceElement.ToDisplayString(FullyQualified);
-        var destElem = destinationElement.ToDisplayString(FullyQualified);
         var toArray = destination is IArrayTypeSymbol;
-        var pairs = BuildAssignmentPairs(compilation, sourceElement, destinationElement, "item", ImmutableHashSet.Create(StringComparer.Ordinal, destElem));
 
         var sb = new StringBuilder();
         sb.AppendLine("            if (source is null) throw new global::System.ArgumentNullException(nameof(source));");
@@ -151,9 +171,9 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
         sb.AppendLine("            {");
         sb.AppendLine($"                result.Add(new {destElem}");
         sb.AppendLine("                {");
-        foreach (var pair in pairs)
+        foreach (var (name, expr) in pairs)
         {
-            sb.AppendLine($"                    {pair},");
+            sb.AppendLine($"                    {name} = {expr},");
         }
         sb.AppendLine("                });");
         sb.AppendLine("            }");
@@ -164,12 +184,11 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
         return sb.ToString();
     }
 
-    /// <summary>Builds "<c>Name = &lt;value expression&gt;</c>" pairs for a destination.</summary>
-    private static List<string> BuildAssignmentPairs(
+    private static List<(string Name, string Expr)> BuildAssignmentPairs(
         Compilation compilation, ITypeSymbol source, ITypeSymbol destination, string accessor, ImmutableHashSet<string> visited)
     {
         var sourceProps = ReadableProperties(source);
-        var pairs = new List<string>();
+        var pairs = new List<(string Name, string Expr)>();
 
         foreach (var dest in SettableProperties(destination))
         {
@@ -180,23 +199,53 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
                 value = BuildValue(compilation, src.Type, dest.Type, $"{accessor}.{dest.Name}", visited);
             }
 
-            // No direct match — try flattening (e.g. CustomerName -> Customer.Name).
             value ??= BuildFlattenedValue(compilation, sourceProps.Values, dest, accessor);
 
             if (value is not null)
             {
-                pairs.Add($"{dest.Name} = {value}");
+                pairs.Add((dest.Name, value));
             }
         }
 
         return pairs;
     }
 
-    /// <summary>
-    /// Resolves a destination member against a nested source path by splitting its
-    /// PascalCase name — e.g. <c>CustomerName</c> becomes <c>source.Customer.Name</c>.
-    /// One level deep, longest matching prefix wins, null intermediates yield default.
-    /// </summary>
+    private static string? BuildValue(
+        Compilation compilation, ITypeSymbol source, ITypeSymbol destination, string accessor, ImmutableHashSet<string> visited)
+    {
+        var conversion = compilation.ClassifyConversion(source, destination);
+        if (conversion.IsIdentity || conversion.IsImplicit)
+        {
+            return accessor;
+        }
+
+        if (source is INamedTypeSymbol &&
+            destination is INamedTypeSymbol destNamed &&
+            destination.IsReferenceType &&
+            HasParameterlessCtor(destNamed) &&
+            !destNamed.IsFileLocal &&
+            CollectionElement(destination) is null &&
+            EnumerableElement(source) is null)
+        {
+            var destDisplay = destination.ToDisplayString(FullyQualified);
+            if (visited.Contains(destDisplay) || visited.Count > MaxNestingDepth)
+            {
+                return null;
+            }
+
+            var pairs = BuildAssignmentPairs(compilation, source, destination, accessor, visited.Add(destDisplay));
+            if (pairs.Count == 0)
+            {
+                return null;
+            }
+
+            var body = string.Join(", ", pairs.Select(p => $"{p.Name} = {p.Expr}"));
+            return $"{accessor} is null ? null : new {destDisplay} {{ {body} }}";
+        }
+
+        return null;
+    }
+
     private static string? BuildFlattenedValue(
         Compilation compilation, IEnumerable<IPropertySymbol> sourceProps, IPropertySymbol dest, string accessor)
     {
@@ -225,42 +274,6 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
             return outer.Type.IsReferenceType
                 ? $"{outerAccess} == null ? default : {outerAccess}.{remainder}"
                 : $"{outerAccess}.{remainder}";
-        }
-
-        return null;
-    }
-
-    /// <summary>The right-hand side that produces a destination value, or null if unmappable.</summary>
-    private static string? BuildValue(
-        Compilation compilation, ITypeSymbol source, ITypeSymbol destination, string accessor, ImmutableHashSet<string> visited)
-    {
-        var conversion = compilation.ClassifyConversion(source, destination);
-        if (conversion.IsIdentity || conversion.IsImplicit)
-        {
-            return accessor;
-        }
-
-        // Nested complex object: map it recursively, guarding null and cycles.
-        if (source is INamedTypeSymbol &&
-            destination is INamedTypeSymbol destNamed &&
-            destination.IsReferenceType &&
-            HasParameterlessCtor(destNamed) &&
-            CollectionElement(destination) is null &&
-            EnumerableElement(source) is null)
-        {
-            var destDisplay = destination.ToDisplayString(FullyQualified);
-            if (visited.Contains(destDisplay) || visited.Count > MaxNestingDepth)
-            {
-                return null;
-            }
-
-            var pairs = BuildAssignmentPairs(compilation, source, destination, accessor, visited.Add(destDisplay));
-            if (pairs.Count == 0)
-            {
-                return null;
-            }
-
-            return $"{accessor} is null ? null : new {destDisplay} {{ {string.Join(", ", pairs)} }}";
         }
 
         return null;
@@ -321,6 +334,10 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
     }
 
     // --- property helpers ----------------------------------------------------
+
+    private static bool IsFileLocal(ITypeSymbol? type) =>
+        type is INamedTypeSymbol { IsFileLocal: true } ||
+        (type is IArrayTypeSymbol array && IsFileLocal(array.ElementType));
 
     private static bool HasParameterlessCtor(INamedTypeSymbol type) =>
         type.IsValueType ||
@@ -385,6 +402,15 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
             return;
         }
 
+        foreach (var callSite in callSites)
+        {
+            if (callSite.UnmappedCsv.Length > 0)
+            {
+                spc.ReportDiagnostic(Diagnostic.Create(
+                    UnmappedMember, callSite.Location, callSite.DestShort, callSite.UnmappedCsv));
+            }
+        }
+
         var groups = callSites
             .GroupBy(c => (c.ReturnType, c.Body))
             .ToArray();
@@ -429,5 +455,6 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
         spc.AddSource("MapperPillow.Interceptors.g.cs", SourceText.From(sb.ToString(), Encoding.UTF8));
     }
 
-    private sealed record CallSite(string ReturnType, string Body, string AttributeText);
+    private sealed record CallSite(
+        string ReturnType, string DestShort, string Body, string UnmappedCsv, string AttributeText, Location Location);
 }
