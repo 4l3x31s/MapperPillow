@@ -200,6 +200,9 @@ MapperPillow es joven. El hueco principal es `ProjectTo` para `IQueryable`
 generador no puede manejar recurre a un mapeador basado en reflexión, así que sigue
 funcionando — solo que no en tiempo de compilación.
 
+Para el panorama completo de lo hecho y lo pendiente (incluido el empaquetado
+NuGet), consulta [ROADMAP.md](ROADMAP.md).
+
 ## Licencia
 
 MIT — consulta [LICENSE](LICENSE). MapperPillow es un proyecto independiente,

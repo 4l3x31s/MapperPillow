@@ -199,6 +199,9 @@ translation), which is a separate expression-tree pipeline. Anything the generat
 can't handle falls back to a reflection-based mapper, so it still works — just not at
 compile time.
 
+For the full picture of what's done and what's left (including NuGet packaging), see
+[ROADMAP.md](ROADMAP.md).
+
 ---
 
 ## Building from source
