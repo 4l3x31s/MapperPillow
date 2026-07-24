@@ -173,12 +173,16 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
 
         foreach (var dest in SettableProperties(destination))
         {
-            if (!sourceProps.TryGetValue(dest.Name, out var src))
+            string? value = null;
+
+            if (sourceProps.TryGetValue(dest.Name, out var src))
             {
-                continue;
+                value = BuildValue(compilation, src.Type, dest.Type, $"{accessor}.{dest.Name}", visited);
             }
 
-            var value = BuildValue(compilation, src.Type, dest.Type, $"{accessor}.{dest.Name}", visited);
+            // No direct match — try flattening (e.g. CustomerName -> Customer.Name).
+            value ??= BuildFlattenedValue(compilation, sourceProps.Values, dest, accessor);
+
             if (value is not null)
             {
                 pairs.Add($"{dest.Name} = {value}");
@@ -186,6 +190,44 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
         }
 
         return pairs;
+    }
+
+    /// <summary>
+    /// Resolves a destination member against a nested source path by splitting its
+    /// PascalCase name — e.g. <c>CustomerName</c> becomes <c>source.Customer.Name</c>.
+    /// One level deep, longest matching prefix wins, null intermediates yield default.
+    /// </summary>
+    private static string? BuildFlattenedValue(
+        Compilation compilation, IEnumerable<IPropertySymbol> sourceProps, IPropertySymbol dest, string accessor)
+    {
+        var candidates = sourceProps
+            .Where(s => s.Type is INamedTypeSymbol &&
+                        CollectionElement(s.Type) is null &&
+                        dest.Name.Length > s.Name.Length &&
+                        dest.Name.StartsWith(s.Name, StringComparison.Ordinal))
+            .OrderByDescending(s => s.Name.Length);
+
+        foreach (var outer in candidates)
+        {
+            var remainder = dest.Name.Substring(outer.Name.Length);
+            if (!ReadableProperties(outer.Type).TryGetValue(remainder, out var inner))
+            {
+                continue;
+            }
+
+            var conversion = compilation.ClassifyConversion(inner.Type, dest.Type);
+            if (!conversion.IsIdentity && !conversion.IsImplicit)
+            {
+                continue;
+            }
+
+            var outerAccess = $"{accessor}.{outer.Name}";
+            return outer.Type.IsReferenceType
+                ? $"{outerAccess} == null ? default : {outerAccess}.{remainder}"
+                : $"{outerAccess}.{remainder}";
+        }
+
+        return null;
     }
 
     /// <summary>The right-hand side that produces a destination value, or null if unmappable.</summary>

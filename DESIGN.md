@@ -106,8 +106,15 @@ Chosen engine: **Roslyn incremental source generator + C# interceptors.**
   - Nested complex objects (DONE): a destination property whose type is another
     mappable reference type is mapped recursively (`accessor is null ? null : new
     Dest { ... }`), with cycle protection (visited set) and a depth cap.
-  - Pending: flattening (`Order.Customer.Name` → `CustomerName`), collection-valued
-    properties, nullable handling, enums.
+  - Flattening (DONE): a destination member with no direct match is resolved
+    against a nested source path by splitting its PascalCase name (longest matching
+    prefix wins), one level deep, with null intermediates yielding `default`.
+  - Pending: multi-level flattening, collection-valued properties, nullable
+    handling, enums.
+
+- **Milestone 4 — Compile-time diagnostics.** Report destination members that stay
+  unmapped as build warnings, naming the exact member — the replacement for
+  AutoMapper's runtime `AssertConfigurationIsValid()`.
 - **Milestone 4 — Escape hatches.** Minimal, opt-in customization for the unusual
   cases (member remap, ignore, custom converter) — kept small on purpose.
 - **Milestone 5 — `ProjectTo` for `IQueryable`** (EF Core translation).
