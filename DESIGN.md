@@ -113,15 +113,17 @@ Chosen engine: **Roslyn incremental source generator + C# interceptors.**
   - Collection-valued properties (DONE): a property whose type is a collection maps
     each element via `Enumerable.Select(...).ToList()/.ToArray()` (null -> null),
     reusing the element mapping rules; unique lambda variable per nesting level.
-  - Enums (DONE): enum <-> enum by value (`(Dest)src`), enum -> string
-    (`.ToString()`), string -> enum (`Enum.Parse`). Other enum/numeric combinations
-    fall back to the runtime mapper.
+  - Enums (DONE): enum <-> enum by value, enum <-> integral (`(Dest)src`), enum ->
+    string (`.ToString()`), string -> enum (`Enum.Parse`).
+  - Nullables (DONE): a `Nullable<U>` source to a non-nullable value destination
+    unwraps with `GetValueOrDefault()` (null -> default); wrapping is already an
+    implicit conversion.
   - Constructor-based destinations (DONE): types without a parameterless constructor
     (e.g. positional records) map via the richest satisfiable public constructor
     (`new Dest(a, b) { ... }`), matching parameters to source members by name
     (case-insensitive) and filling remaining settable members via the initializer.
     Unified `BuildConstruction` is used for scalar, nested, and collection elements.
-  - Pending: enum<->numeric, nullable handling.
+  - Pending: custom value converters.
 
 - **Milestone 4 — Compile-time diagnostics (DONE).** `MP0001` warns at the call
   site when a destination member stays unmapped, naming it — the replacement for

@@ -366,7 +366,20 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
             return accessor;
         }
 
-        // Enums: enum <-> enum (by value), enum -> string, string -> enum.
+        // Nullable value source -> non-nullable value destination: unwrap with default.
+        if (source is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullableSource &&
+            destination.IsValueType &&
+            destination is not INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T })
+        {
+            var underlying = nullableSource.TypeArguments[0];
+            var unwrapped = compilation.ClassifyConversion(underlying, destination);
+            if (unwrapped.IsIdentity || unwrapped.IsImplicit)
+            {
+                return $"{accessor}.GetValueOrDefault()";
+            }
+        }
+
+        // Enums: enum <-> enum (by value), enum <-> integral, enum -> string, string -> enum.
         if (source.TypeKind == TypeKind.Enum || destination.TypeKind == TypeKind.Enum)
         {
             var destDisplay = destination.ToDisplayString(FullyQualified);
@@ -384,6 +397,12 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
             if (source.SpecialType == SpecialType.System_String && destination.TypeKind == TypeKind.Enum)
             {
                 return $"({destDisplay})global::System.Enum.Parse(typeof({destDisplay}), {accessor})";
+            }
+
+            if ((source.TypeKind == TypeKind.Enum && IsIntegral(destination)) ||
+                (IsIntegral(source) && destination.TypeKind == TypeKind.Enum))
+            {
+                return $"({destDisplay}){accessor}";
             }
 
             return null;
@@ -555,6 +574,12 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
     }
 
     // --- property helpers ----------------------------------------------------
+
+    private static bool IsIntegral(ITypeSymbol type) => type.SpecialType is
+        SpecialType.System_SByte or SpecialType.System_Byte or
+        SpecialType.System_Int16 or SpecialType.System_UInt16 or
+        SpecialType.System_Int32 or SpecialType.System_UInt32 or
+        SpecialType.System_Int64 or SpecialType.System_UInt64;
 
     private static bool IsFileLocal(ITypeSymbol? type) =>
         type is INamedTypeSymbol { IsFileLocal: true } ||
