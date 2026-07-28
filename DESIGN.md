@@ -166,9 +166,15 @@ Chosen engine: **Roslyn incremental source generator + C# interceptors.**
   body shape (`BuildProjectionBody`) reusing the same `BuildConstruction` planner,
   plus an interceptor whose parameter is `IQueryable` instead of `object`.
 
-  The genuinely hard part is not building the projection but **restricting** it: some
-  expressions are valid trees that no provider can translate (`[MapConvert]`
-  converters, `Enum.Parse`). Diagnosing those at the call site is the open work.
+  The genuinely hard part is not building the projection but **restricting** it, and
+  that is `MP0003`. Which constructs to flag was settled by measuring EF Core rather
+  than reasoning about it, and the measurements overturned the assumptions twice:
+  `enum` → `string` translates fine (flagging it would have been a false positive),
+  and a `[MapConvert]` converter does not throw at all — EF silently evaluates it on
+  the client, so the real cost is that the database never computes the member and
+  nothing composed afterwards can filter on it. Only `string` → `enum` is rejected
+  outright. Flagged members are still emitted: dropping them would return a DTO with
+  a silently missing value.
 
   `ProjectTo` deliberately has no reflection fallback: building the projection at
   runtime is exactly the cost this library exists to avoid.

@@ -31,7 +31,7 @@ public sealed class ProjectToTranslationTests : IDisposable
         _db.Database.EnsureCreated();
 
         _db.Customers.Add(new Customer { Id = 1, Name = "Ada", City = "London" });
-        _db.Orders.Add(new Order { Id = 10, Reference = "A-1", CustomerId = 1 });
+        _db.Orders.Add(new Order { Id = 10, Reference = "a-1", CustomerId = 1, Status = OrderStatus.Shipped });
         _db.Orders.Add(new Order { Id = 11, Reference = "A-2", CustomerId = 1 });
         _db.SaveChanges();
         _db.ChangeTracker.Clear();
@@ -57,7 +57,7 @@ public sealed class ProjectToTranslationTests : IDisposable
         var dtos = _db.Orders.ProjectTo<OrderDto>().OrderBy(d => d.Id).ToList();
 
         Assert.Equal(2, dtos.Count);
-        Assert.Equal("A-1", dtos[0].Reference);
+        Assert.Equal("a-1", dtos[0].Reference);
         Assert.Equal("London", dtos[0].CustomerCity);
         Assert.Equal("Ada", dtos[0].CustomerName);
     }
@@ -72,6 +72,49 @@ public sealed class ProjectToTranslationTests : IDisposable
 
         Assert.Contains("WHERE", sql, StringComparison.OrdinalIgnoreCase);
         Assert.Single(query.ToList());
+    }
+
+    [Fact]
+    public void Enum_to_string_is_translated_by_the_provider()
+    {
+        // Decides whether the generator should flag enum -> string as untranslatable
+        // in a projection. It emits `src.Status.ToString()`; if the provider handles
+        // that, flagging it would be a false positive.
+        var dtos = _db.Orders.ProjectTo<OrderStatusDto>().OrderBy(d => d.Id).ToList();
+
+        Assert.Equal("Shipped", dtos[0].Status);
+    }
+
+    [Fact]
+    public void A_value_converter_is_evaluated_on_the_client_not_by_the_database()
+    {
+        // Grounds the MP0003 wording. A converter does NOT throw: EF Core silently
+        // evaluates it client-side. The real cost is that the database never computes
+        // the member, so nothing composed afterwards can filter on it.
+        // MP0003 is suppressed because triggering it is the point of the test.
+#pragma warning disable MP0003
+        var query = _db.Orders.ProjectTo<OrderConvertedDto>();
+#pragma warning restore MP0003
+
+        // The converter ran — 'a-1' came back upper-cased...
+        var rows = query.OrderBy(d => d.Id).ToList();
+        Assert.Equal("A-1", rows[0].Reference);
+
+        // ...but the provider cannot filter on what it never computed.
+        Assert.ThrowsAny<InvalidOperationException>(
+            () => query.Where(d => d.Reference == "A-1").ToList());
+    }
+
+    [Fact]
+    public void String_to_enum_is_rejected_by_the_provider_outright()
+    {
+        // The other half of MP0003, and it behaves differently from a converter:
+        // Enum.Parse is not client-evaluated, it throws.
+#pragma warning disable MP0003
+        var query = _db.Orders.ProjectTo<OrderParsedDto>();
+#pragma warning restore MP0003
+
+        Assert.ThrowsAny<InvalidOperationException>(() => query.ToList());
     }
 
     public void Dispose()
@@ -95,12 +138,39 @@ public sealed class ProjectToTranslationTests : IDisposable
         public string City { get; set; } = "";
     }
 
+    public enum OrderStatus { New, Shipped }
+
     public sealed class Order
     {
         public int Id { get; set; }
         public string Reference { get; set; } = "";
+        public OrderStatus Status { get; set; }
         public int CustomerId { get; set; }
         public Customer Customer { get; set; } = null!;
+    }
+
+    public sealed class OrderStatusDto
+    {
+        public int Id { get; set; }
+        public string Status { get; set; } = "";
+    }
+
+    public sealed class Shout : IValueConverter<string, string>
+    {
+        public string Convert(string source) => source.ToUpperInvariant();
+    }
+
+    public sealed class OrderConvertedDto
+    {
+        public int Id { get; set; }
+        [MapConvert(typeof(Shout))]
+        public string Reference { get; set; } = "";
+    }
+
+    public sealed class OrderParsedDto
+    {
+        public int Id { get; set; }
+        public OrderStatus Reference { get; set; }
     }
 
     public sealed class OrderDto

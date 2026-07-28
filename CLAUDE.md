@@ -80,6 +80,13 @@ write the `[InterceptsLocation]` interceptor). `MapTo`/`Map` live in
 - The generator skips **open generics** (`ITypeParameterSymbol`) and **`file`-local
   types** (can't be referenced from the generated file) — both fall back to reflection
   and report **MP0002**. Do not remove those guards.
+- **`MP0003`'s flag list is measured, not reasoned.** Which projected constructs a
+  provider cannot translate was settled by running EF Core, and the results
+  contradicted the obvious guesses twice: `enum` → `string` translates fine (flagging
+  it would be a false positive), and a `[MapConvert]` converter does *not* throw — EF
+  client-evaluates it silently. Only `string` → `enum` is rejected outright. Before
+  adding or removing anything from that list, add a test to
+  `MapperPillow.EfCore.Tests` and measure it. Never reason about it.
 - **Never put `[RequiresUnreferencedCode]` on the public `MapTo`/`Map`.** Verified: the
   trim analyzer reads the original call site, not the interceptor, so it fires IL2026
   on fully generated call sites too. Trim-safety comes from the

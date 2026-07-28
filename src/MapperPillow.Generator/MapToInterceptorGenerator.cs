@@ -48,6 +48,70 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
         isEnabledByDefault: true,
         description: "The reflection fallback only copies public properties matching by name and assignable type, so it can produce a different result than the generated mapper, and a trimmed or Native AOT build may drop the members it needs. Change the call site so it can be generated, or map explicitly.");
 
+    private static readonly DiagnosticDescriptor UntranslatableProjection = new(
+        id: "MP0003",
+        title: "Projected member is not translated by the query provider",
+        messageFormat: "{0} projects member(s) the query provider cannot translate: {1}",
+        category: "MapperPillow",
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true,
+        description: "ProjectTo emits a LINQ projection for the database to run, so every member has to be expressible in the provider's query language. These members are valid in an expression tree but not translatable. Measured against EF Core: some throw outright, and some are silently evaluated on the client — which still costs a per-row callback and, either way, means nothing composed after the ProjectTo can filter or order by that member. Map them after materialising with MapTo, or exclude them with [MapIgnore].");
+
+    /// <summary>
+    /// Carries planning state that the recursive value planner needs but that differs
+    /// between mapping and projection.
+    /// </summary>
+    /// <remarks>
+    /// The distinction exists because a projection is executed by a query provider,
+    /// not by .NET. Some expressions are perfectly valid trees that no provider can
+    /// translate — running user code (a <c>[MapConvert]</c> converter) or calling
+    /// <c>Enum.Parse</c>. Those are emitted anyway, deliberately: dropping them would
+    /// silently produce a DTO with missing members, which is worse than a build
+    /// warning plus a loud provider error.
+    /// </remarks>
+    private sealed class PlanContext
+    {
+        private readonly List<(string Member, string Reason)> _untranslatable = new();
+
+        public PlanContext(bool forProjection) => ForProjection = forProjection;
+
+        public bool ForProjection { get; }
+
+        public IReadOnlyList<(string Member, string Reason)> Untranslatable => _untranslatable;
+
+        /// <summary>Position to attribute later refusals from. See <see cref="AttributeFrom"/>.</summary>
+        public int Mark() => _untranslatable.Count;
+
+        /// <summary>Records a refusal whose destination member the caller will supply.</summary>
+        public void Record(string reason)
+        {
+            if (ForProjection)
+            {
+                _untranslatable.Add((string.Empty, reason));
+            }
+        }
+
+        /// <summary>
+        /// Names every refusal recorded since <paramref name="from"/>. The value planner
+        /// is recursive and does not know which destination member it is serving, so the
+        /// assignment loop labels them once the value comes back.
+        /// </summary>
+        public void AttributeFrom(int from, string member)
+        {
+            for (var i = from; i < _untranslatable.Count; i++)
+            {
+                if (_untranslatable[i].Member.Length == 0)
+                {
+                    _untranslatable[i] = (member, _untranslatable[i].Reason);
+                }
+            }
+        }
+
+        public string Describe() => string.Join(", ", _untranslatable
+            .Select(u => u.Member.Length == 0 ? u.Reason : $"'{u.Member}' ({u.Reason})")
+            .Distinct(StringComparer.Ordinal));
+    }
+
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
         var candidates = context.SyntaxProvider
@@ -120,10 +184,11 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
             return Candidate.Skip(call, "this call site has no interceptable location", location);
         }
 
-        var plan = isProjection
-            ? BuildProjectionBody(ctx.SemanticModel.Compilation, srcType, destType)
-            : BuildBody(ctx.SemanticModel.Compilation, srcType, destType);
-        if (plan is null)
+        var plan = new PlanContext(isProjection);
+        var built = isProjection
+            ? BuildProjectionBody(ctx.SemanticModel.Compilation, plan, srcType, destType)
+            : BuildBody(ctx.SemanticModel.Compilation, plan, srcType, destType);
+        if (built is null)
         {
             return Candidate.Skip(
                 call,
@@ -141,8 +206,9 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
             returnType,
             isProjection ? "global::System.Linq.IQueryable" : "object",
             call,
-            plan.Value.Body,
-            plan.Value.UnmappedCsv,
+            built.Value.Body,
+            built.Value.UnmappedCsv,
+            plan.Describe(),
             interceptable.GetInterceptsLocationAttributeSyntax(),
             location));
     }
@@ -159,7 +225,7 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
     /// nothing to cache, and nothing that needs dynamic code under Native AOT.
     /// </remarks>
     private static (string Body, string UnmappedCsv)? BuildProjectionBody(
-        Compilation compilation, ITypeSymbol source, ITypeSymbol destination)
+        Compilation compilation, PlanContext ctx, ITypeSymbol source, ITypeSymbol destination)
     {
         if (EnumerableElement(source) is not INamedTypeSymbol srcElem ||
             destination is not INamedTypeSymbol destNamed ||
@@ -169,7 +235,7 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
         }
 
         var visited = ImmutableHashSet.Create(StringComparer.Ordinal, destNamed.ToDisplayString(FullyQualified));
-        var construction = BuildConstruction(compilation, srcElem, destNamed, "src", visited);
+        var construction = BuildConstruction(compilation, ctx, srcElem, destNamed, "src", visited);
         if (construction is null)
         {
             return null;
@@ -187,7 +253,7 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
         return (sb.ToString(), UnmappedFrom(destNamed, construction.Value.Mapped));
     }
 
-    private static (string Body, string UnmappedCsv)? BuildBody(Compilation compilation, ITypeSymbol source, ITypeSymbol destination)
+    private static (string Body, string UnmappedCsv)? BuildBody(Compilation compilation, PlanContext ctx, ITypeSymbol source, ITypeSymbol destination)
     {
         var destElement = CollectionElement(destination);
         if (destElement is not null)
@@ -200,7 +266,7 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
             }
 
             var elemVisited = ImmutableHashSet.Create(StringComparer.Ordinal, destElem.ToDisplayString(FullyQualified));
-            var built = BuildConstruction(compilation, srcElem, destElem, "item", elemVisited);
+            var built = BuildConstruction(compilation, ctx, srcElem, destElem, "item", elemVisited);
             if (built is null)
             {
                 return null;
@@ -217,7 +283,7 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
         }
 
         var visited = ImmutableHashSet.Create(StringComparer.Ordinal, destNamed.ToDisplayString(FullyQualified));
-        var construction = BuildConstruction(compilation, source, destNamed, "typed", visited);
+        var construction = BuildConstruction(compilation, ctx, source, destNamed, "typed", visited);
         if (construction is null)
         {
             return null;
@@ -266,10 +332,10 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
     /// of destination member names it covers, or null if it cannot be constructed.
     /// </summary>
     private static (string Expr, ImmutableHashSet<string> Mapped)? BuildConstruction(
-        Compilation compilation, ITypeSymbol source, INamedTypeSymbol destination, string accessor, ImmutableHashSet<string> visited)
+        Compilation compilation, PlanContext ctx, ITypeSymbol source, INamedTypeSymbol destination, string accessor, ImmutableHashSet<string> visited)
     {
         var display = destination.ToDisplayString(FullyQualified);
-        var pairs = BuildAssignmentPairs(compilation, source, destination, accessor, visited);
+        var pairs = BuildAssignmentPairs(compilation, ctx, source, destination, accessor, visited);
 
         if (HasParameterlessCtor(destination))
         {
@@ -279,7 +345,7 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
             return (expr, pairs.Select(p => p.Name).ToImmutableHashSet(StringComparer.Ordinal));
         }
 
-        var ctor = ChooseConstructor(compilation, source, destination, accessor, visited);
+        var ctor = ChooseConstructor(compilation, ctx, source, destination, accessor, visited);
         if (ctor is null)
         {
             return null;
@@ -299,7 +365,7 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
     /// expressions plus the destination members those parameters cover.
     /// </summary>
     private static (List<string> Args, ImmutableHashSet<string> Consumed)? ChooseConstructor(
-        Compilation compilation, ITypeSymbol source, INamedTypeSymbol destination, string accessor, ImmutableHashSet<string> visited)
+        Compilation compilation, PlanContext ctx, ITypeSymbol source, INamedTypeSymbol destination, string accessor, ImmutableHashSet<string> visited)
     {
         var sourceByName = new Dictionary<string, IPropertySymbol>(StringComparer.OrdinalIgnoreCase);
         foreach (var p in ReadableProperties(source).Values)
@@ -335,7 +401,7 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
                     break;
                 }
 
-                var value = BuildValue(compilation, srcProp.Type, param.Type, $"{accessor}.{srcProp.Name}", visited);
+                var value = BuildValue(compilation, ctx, srcProp.Type, param.Type, $"{accessor}.{srcProp.Name}", visited);
                 if (value is null)
                 {
                     usable = false;
@@ -357,7 +423,7 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
     }
 
     private static List<(string Name, string Expr)> BuildAssignmentPairs(
-        Compilation compilation, ITypeSymbol source, ITypeSymbol destination, string accessor, ImmutableHashSet<string> visited)
+        Compilation compilation, PlanContext ctx, ITypeSymbol source, ITypeSymbol destination, string accessor, ImmutableHashSet<string> visited)
     {
         var sourceProps = ReadableProperties(source);
         var pairs = new List<(string Name, string Expr)>();
@@ -369,23 +435,25 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
                 continue;
             }
 
+            var mark = ctx.Mark();
+
             string? value;
             var converter = MapConverter(dest);
             var mapFrom = MapFromPath(dest);
             if (converter is not null)
             {
-                value = BuildConverterValue(compilation, source, dest, accessor, converter);
+                value = BuildConverterValue(compilation, ctx, source, dest, accessor, converter);
             }
             else if (mapFrom is not null)
             {
                 value = BuildMapFromExpr(
-                    compilation, source, accessor, mapFrom.Split('.'), 0, dest.Type,
+                    compilation, ctx, source, accessor, mapFrom.Split('.'), 0, dest.Type,
                     dest.Type.ToDisplayString(FullyQualified), visited);
             }
             else
             {
                 value = sourceProps.TryGetValue(dest.Name, out var src)
-                    ? BuildValue(compilation, src.Type, dest.Type, $"{accessor}.{dest.Name}", visited)
+                    ? BuildValue(compilation, ctx, src.Type, dest.Type, $"{accessor}.{dest.Name}", visited)
                     : null;
                 value ??= BuildFlattenedValue(compilation, source, dest, accessor);
             }
@@ -394,6 +462,10 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
             {
                 pairs.Add((dest.Name, value));
             }
+
+            // The value planner is recursive and does not know which destination
+            // member it served, so name any refusals it recorded now that we do.
+            ctx.AttributeFrom(mark, dest.Name);
         }
 
         return pairs;
@@ -432,7 +504,7 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
 
     /// <summary>Emits <c>new Converter().Convert(source.Member)</c> for <c>[MapConvert]</c>.</summary>
     private static string? BuildConverterValue(
-        Compilation compilation, ITypeSymbol source, IPropertySymbol dest, string accessor, INamedTypeSymbol converter)
+        Compilation compilation, PlanContext ctx, ITypeSymbol source, IPropertySymbol dest, string accessor, INamedTypeSymbol converter)
     {
         if (converter.IsFileLocal || !HasParameterlessCtor(converter))
         {
@@ -461,12 +533,17 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
             return null;
         }
 
+        // Measured against EF Core: this does not throw — the provider silently
+        // evaluates it on the client. The cost is that the database never computes the
+        // member, so nothing composed after the ProjectTo can filter or order by it.
+        ctx.Record("a [MapConvert] converter is evaluated on the client, so the database never computes the member");
+
         return $"new {converter.ToDisplayString(FullyQualified)}().Convert({accessor}.{srcProp.Name})";
     }
 
     /// <summary>Resolves an explicit dot-separated source path for <c>[MapFrom]</c>.</summary>
     private static string? BuildMapFromExpr(
-        Compilation compilation, ITypeSymbol type, string accessor, string[] segments, int index,
+        Compilation compilation, PlanContext ctx, ITypeSymbol type, string accessor, string[] segments, int index,
         ITypeSymbol targetType, string targetDisplay, ImmutableHashSet<string> visited)
     {
         if (index >= segments.Length ||
@@ -479,10 +556,10 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
 
         if (index == segments.Length - 1)
         {
-            return BuildValue(compilation, property.Type, targetType, access, visited);
+            return BuildValue(compilation, ctx, property.Type, targetType, access, visited);
         }
 
-        var sub = BuildMapFromExpr(compilation, property.Type, access, segments, index + 1, targetType, targetDisplay, visited);
+        var sub = BuildMapFromExpr(compilation, ctx, property.Type, access, segments, index + 1, targetType, targetDisplay, visited);
         if (sub is null)
         {
             return null;
@@ -495,7 +572,7 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
 
     /// <summary>The right-hand side that produces a destination value, or null if unmappable.</summary>
     private static string? BuildValue(
-        Compilation compilation, ITypeSymbol source, ITypeSymbol destination, string accessor, ImmutableHashSet<string> visited)
+        Compilation compilation, PlanContext ctx, ITypeSymbol source, ITypeSymbol destination, string accessor, ImmutableHashSet<string> visited)
     {
         var conversion = compilation.ClassifyConversion(source, destination);
         if (conversion.IsIdentity || conversion.IsImplicit)
@@ -533,6 +610,12 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
 
             if (source.SpecialType == SpecialType.System_String && destination.TypeKind == TypeKind.Enum)
             {
+                // Unlike a converter, this one throws outright — EF Core will not even
+                // client-evaluate it. The reverse direction (enum -> string) emits
+                // ToString(), which providers do translate, so it is not flagged. Both
+                // measured in MapperPillow.EfCore.Tests.
+                ctx.Record("string to enum uses Enum.Parse, which the provider rejects outright");
+
                 return $"({destDisplay})global::System.Enum.Parse(typeof({destDisplay}), {accessor})";
             }
 
@@ -564,7 +647,7 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
 
             var childVisited = visited.Add(elemDisplay);
             var lambda = $"e{childVisited.Count}";
-            var built = BuildConstruction(compilation, srcElem, destElem, lambda, childVisited);
+            var built = BuildConstruction(compilation, ctx, srcElem, destElem, lambda, childVisited);
             if (built is null)
             {
                 return null;
@@ -590,7 +673,7 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
                 return null;
             }
 
-            var built = BuildConstruction(compilation, source, destNamed, accessor, visited.Add(destDisplay));
+            var built = BuildConstruction(compilation, ctx, source, destNamed, accessor, visited.Add(destDisplay));
             if (built is null)
             {
                 return null;
@@ -817,6 +900,12 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
                 spc.ReportDiagnostic(Diagnostic.Create(
                     UnmappedMember, callSite.Location, callSite.Call, callSite.UnmappedCsv));
             }
+
+            if (callSite.UntranslatableCsv.Length > 0)
+            {
+                spc.ReportDiagnostic(Diagnostic.Create(
+                    UntranslatableProjection, callSite.Location, callSite.Call, callSite.UntranslatableCsv));
+            }
         }
 
         var groups = callSites
@@ -867,9 +956,12 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
     /// The interceptor's parameter type. It must match the intercepted method's own
     /// signature: <c>object</c> for MapTo/Map, <c>IQueryable</c> for ProjectTo.
     /// </param>
+    /// <param name="UntranslatableCsv">
+    /// Projected members no query provider can translate, empty for a plain mapping.
+    /// </param>
     private sealed record CallSite(
         string ReturnType, string SourceParameter, string Call, string Body, string UnmappedCsv,
-        string AttributeText, Location Location);
+        string UntranslatableCsv, string AttributeText, Location Location);
 
     /// <summary>A call site that could not be generated, and why.</summary>
     private sealed record SkippedCallSite(string Call, string Reason, Location Location);

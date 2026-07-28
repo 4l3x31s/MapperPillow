@@ -238,11 +238,31 @@ compiler turns into the expression tree — so there is no runtime pipeline buil
 expressions, and flattening becomes a `JOIN` rather than a second round trip.
 Operators composed after `ProjectTo` stay in the same query.
 
-Two caveats worth knowing. `ProjectTo` has **no reflection fallback** — it needs the
-generator, and says so with `MP0002`. And a few things that map fine with `MapTo`
-cannot be translated by a database: `[MapConvert]` converters and `string` → `enum`
-among them. Those currently surface as a provider error at query time rather than a
-build warning.
+`ProjectTo` has **no reflection fallback** — it needs the generator, and says so with
+`MP0002`.
+
+### Build-time safety: the `MP0003` diagnostic
+
+A few things that map fine with `MapTo` are not translatable by a database, and the
+failure is not always loud. Measured against EF Core:
+
+| Construct | What the provider actually does |
+|---|---|
+| `[MapConvert]` converter | **Silently evaluates it on the client.** The query works, but the database never computes the member — so nothing composed after the `ProjectTo` can filter or order by it. |
+| `string` → `enum` | **Throws.** `Enum.Parse` is not client-evaluated at all. |
+| `enum` → `string` | Translated fine. Not flagged. |
+
+`MP0003` warns at the call site, naming the member and which of the two it is:
+
+```
+warning MP0003: ProjectTo<OrderDto> projects member(s) the query provider cannot
+translate: 'Total' (a [MapConvert] converter is evaluated on the client, so the
+database never computes the member)
+```
+
+The member is still emitted — dropping it would hand you a DTO with a silently
+missing value, which is worse. Map it after materialising with `MapTo`, or exclude it
+with `[MapIgnore]`.
 
 ### Trimming and Native AOT
 

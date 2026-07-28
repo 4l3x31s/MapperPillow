@@ -256,6 +256,80 @@ public class GeneratorTests
     }
 
     [Fact]
+    public void Warns_MP0003_when_a_projection_uses_a_value_converter()
+    {
+        var result = GeneratorHarness.Run(
+            """
+            using MapperPillow;
+            using System.Linq;
+            namespace Demo;
+            public class Cents : IValueConverter<int, string> { public string Convert(int s) => s.ToString(); }
+            public class Order { public int Total { get; set; } }
+            public class OrderDto { [MapConvert(typeof(Cents))] public string Total { get; set; } = ""; }
+            public static class Run { public static IQueryable<OrderDto> Do(IQueryable<Order> q) => q.ProjectTo<OrderDto>(); }
+            """);
+
+        var diagnostic = result.Diagnostics.Single(d => d.Id == "MP0003");
+        Assert.Contains("Total", diagnostic.GetMessage());
+        Assert.Contains("MapConvert", diagnostic.GetMessage());
+    }
+
+    [Fact]
+    public void Warns_MP0003_when_a_projection_parses_a_string_into_an_enum()
+    {
+        var result = GeneratorHarness.Run(
+            """
+            using MapperPillow;
+            using System.Linq;
+            namespace Demo;
+            public enum Status { New, Shipped }
+            public class Order { public string Status { get; set; } = ""; }
+            public class OrderDto { public Status Status { get; set; } }
+            public static class Run { public static IQueryable<OrderDto> Do(IQueryable<Order> q) => q.ProjectTo<OrderDto>(); }
+            """);
+
+        var diagnostic = result.Diagnostics.Single(d => d.Id == "MP0003");
+        Assert.Contains("Status", diagnostic.GetMessage());
+    }
+
+    [Fact]
+    public void No_MP0003_for_constructs_a_provider_can_translate()
+    {
+        // enum -> string is emitted as ToString(), which EF Core translates — flagging
+        // it would be a false positive. Verified in MapperPillow.EfCore.Tests.
+        var result = GeneratorHarness.Run(
+            """
+            using MapperPillow;
+            using System.Linq;
+            namespace Demo;
+            public enum Status { New, Shipped }
+            public class Customer { public string City { get; set; } = ""; }
+            public class Order { public Status Status { get; set; } public int? Total { get; set; } public Customer Customer { get; set; } = new(); }
+            public class OrderDto { public string Status { get; set; } = ""; public int Total { get; set; } public string CustomerCity { get; set; } = ""; }
+            public static class Run { public static IQueryable<OrderDto> Do(IQueryable<Order> q) => q.ProjectTo<OrderDto>(); }
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, d => d.Id == "MP0003");
+    }
+
+    [Fact]
+    public void No_MP0003_for_MapTo_which_runs_in_memory()
+    {
+        // The same converter is perfectly fine outside a query.
+        var result = GeneratorHarness.Run(
+            """
+            using MapperPillow;
+            namespace Demo;
+            public class Cents : IValueConverter<int, string> { public string Convert(int s) => s.ToString(); }
+            public class Order { public int Total { get; set; } }
+            public class OrderDto { [MapConvert(typeof(Cents))] public string Total { get; set; } = ""; }
+            public static class Run { public static OrderDto Do(Order o) => o.MapTo<OrderDto>(); }
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, d => d.Id == "MP0003");
+    }
+
+    [Fact]
     public void No_MP0002_when_the_call_site_is_intercepted()
     {
         var result = GeneratorHarness.Run(

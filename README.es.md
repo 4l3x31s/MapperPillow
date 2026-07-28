@@ -245,11 +245,31 @@ tiempo de ejecución construyendo expresiones, y el aplanamiento se resuelve con
 `JOIN` en lugar de un segundo viaje a la base. Los operadores que compongas después de
 `ProjectTo` siguen dentro de la misma consulta.
 
-Dos advertencias que conviene saber. `ProjectTo` **no tiene fallback por reflexión**:
-necesita el generador, y lo avisa con `MP0002`. Y algunas cosas que `MapTo` mapea sin
-problema no las puede traducir una base de datos: los conversores `[MapConvert]` y
-`string` → `enum`, entre otras. Hoy aparecen como error del proveedor al ejecutar la
-consulta, no como advertencia de compilación.
+`ProjectTo` **no tiene fallback por reflexión**: necesita el generador, y lo avisa con
+`MP0002`.
+
+### Seguridad en compilación: el diagnóstico `MP0003`
+
+Algunas cosas que `MapTo` mapea sin problema no las puede traducir una base de datos, y
+la falla no siempre es ruidosa. Medido contra EF Core:
+
+| Constructo | Qué hace realmente el proveedor |
+|---|---|
+| Conversor `[MapConvert]` | **Lo evalúa en el cliente, en silencio.** La consulta funciona, pero la base nunca calcula el miembro: nada compuesto después del `ProjectTo` puede filtrar ni ordenar por él. |
+| `string` → `enum` | **Lanza excepción.** `Enum.Parse` no se evalúa en cliente. |
+| `enum` → `string` | Se traduce bien. No se marca. |
+
+`MP0003` advierte en la llamada, nombrando el miembro y cuál de los dos casos es:
+
+```
+warning MP0003: ProjectTo<OrderDto> projects member(s) the query provider cannot
+translate: 'Total' (a [MapConvert] converter is evaluated on the client, so the
+database never computes the member)
+```
+
+El miembro se emite igual: descartarlo te daría un DTO con un valor faltante en
+silencio, que es peor. Mapealo después de materializar con `MapTo`, o excluilo con
+`[MapIgnore]`.
 
 ### Trimming y Native AOT
 

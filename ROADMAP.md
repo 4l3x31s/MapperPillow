@@ -13,7 +13,7 @@ characteristics"). Trimming and Native AOT are supported: trimmed/AOT builds dro
 fallback entirely. The NuGet package is built and verified (it carries the generator as
 an analyzer), but not yet published to nuget.org.
 
-Tests: 33 behavioral × 3 target frameworks + 16 generator + 3 EF Core translation,
+Tests: 33 behavioral × 3 target frameworks + 20 generator + 6 EF Core translation,
 green. Build clean, 0 warnings, including under the trim/AOT analyzers
 (`IsAotCompatible`).
 
@@ -48,7 +48,7 @@ green. Build clean, 0 warnings, including under the trim/AOT analyzers
 
 ## Pending
 
-### 1. `ProjectTo<T>()` — hardening the translatable subset
+### 1. `ProjectTo<T>()` — remaining subset work
 
 The core is done (see "Done"), and it turned out to be *far* smaller than expected.
 This entry used to claim `ProjectTo` was "not an interceptor feature" and needed a
@@ -61,14 +61,20 @@ build the expression tree — no pipeline, no caching, no dynamic code.
 What is left is the subset problem: some things the planner emits compile into a
 valid expression tree but no provider can translate.
 
-- [ ] Diagnose untranslatable constructs at the `ProjectTo` call site rather than
-      letting the provider throw at query time. Known cases: `[MapConvert]`
-      converters (`new C().Convert(x)`), `string` → `enum` (`Enum.Parse`), and
-      possibly `Nullable<T>.GetValueOrDefault()`
+- [x] `MP0003` diagnoses untranslatable projected members at the call site. Which
+      constructs to flag was decided by **measuring** EF Core, not by assuming — and
+      the measurements contradicted the assumptions twice. `enum` → `string` emits
+      `ToString()` and translates fine, so flagging it would have been a false
+      positive. A `[MapConvert]` converter does *not* throw as expected: EF silently
+      client-evaluates it, so the real cost is that the database never computes the
+      member. Only `string` → `enum` throws outright. Both behaviours are pinned by
+      tests in `MapperPillow.EfCore.Tests`
+- [x] Decided: flagged members are still **emitted**. Dropping them would hand back a
+      DTO with a silently missing value, which is worse than a warning
 - [ ] EF Core coverage for nested objects and collection-valued properties inside a
       projection (both work for `MapTo`; untested through a provider)
-- [ ] Decide whether `ProjectTo` should reject, or silently allow, members that only
-      a client-side evaluation could satisfy
+- [ ] Check `Nullable<T>.GetValueOrDefault()` against a provider — believed
+      translatable, but unmeasured, so deliberately not flagged
 
 ### 2. Packaging & release (infrastructure, not features)
 
