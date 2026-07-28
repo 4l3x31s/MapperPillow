@@ -52,7 +52,7 @@ option:
 ```csharp
 var dto  = user.MapTo<UserDto>();
 var dtos = users.MapTo<List<UserDto>>();   // (collections: milestone 3)
-var q    = query.ProjectTo<UserDto>();     // IQueryable projection: later milestone
+var q    = query.ProjectTo<UserDto>();     // IQueryable projection (milestone 7)
 ```
 
 A courtesy `Map<TDestination>()` alias is provided so code migrating from
@@ -146,8 +146,32 @@ Chosen engine: **Roslyn incremental source generator + C# interceptors.**
   not a feature-equivalent second implementation; (c) the fallback sits behind the
   `MapperPillow.EnableReflectionFallback` feature switch, which `PublishTrimmed` and
   `PublishAot` builds default to `false` so the trimmer removes the branch outright.
-- **Milestone 7 — `ProjectTo` for `IQueryable`** (EF Core translation). A separate
-  expression-tree pipeline, not interceptors.
+- **Milestone 7 — `ProjectTo` for `IQueryable`.** This milestone was planned as the
+  largest one in the project, on the assumption that it needed a separate
+  expression-tree pipeline like AutoMapper's `QueryableExtensions`. That assumption
+  was wrong, and the reason is the whole thesis of this library.
+
+  A runtime mapper *must* compose the projection as `Expression` objects, because its
+  configuration only exists at runtime. MapperPillow already knows both types when it
+  runs, so it emits the projection as ordinary C#:
+
+  ```csharp
+  var typed  = (IQueryable<Order>)source;
+  var result = Queryable.Select(typed, src => new OrderDto { ... });
+  ```
+
+  `Queryable.Select` takes an `Expression<Func<,>>`, so the *compiler* builds the
+  expression tree. No pipeline, no expression cache, no `MakeGenericMethod` — and
+  nothing that needs dynamic code under Native AOT. The whole feature is one extra
+  body shape (`BuildProjectionBody`) reusing the same `BuildConstruction` planner,
+  plus an interceptor whose parameter is `IQueryable` instead of `object`.
+
+  The genuinely hard part is not building the projection but **restricting** it: some
+  expressions are valid trees that no provider can translate (`[MapConvert]`
+  converters, `Enum.Parse`). Diagnosing those at the call site is the open work.
+
+  `ProjectTo` deliberately has no reflection fallback: building the projection at
+  runtime is exactly the cost this library exists to avoid.
 
 ## Testing strategy
 
@@ -157,6 +181,11 @@ Two tiers:
   generated interceptors (verified via `MapperPillowTelemetry`, which only the
   generated code increments). Proves the mapping *result* and that reflection is
   bypassed.
+- **`MapperPillow.EfCore.Tests`** — provider tests. `ProjectTo` against EF Core over
+  in-memory SQLite, asserting on `ToQueryString()` that the projection reaches SQL
+  instead of being evaluated on the client. Separate project on purpose: EF Core is
+  not trim-safe, so enabling the AOT analyzers next to it would bury the main suite's
+  zero-warning guarantee.
 - **`MapperPillow.Generator.Tests`** — generator unit tests. `GeneratorHarness`
   runs the generator in-memory over a source string (`CSharpGeneratorDriver`) and
   asserts on the emitted code and diagnostics — no compilation or execution. Proves

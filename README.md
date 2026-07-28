@@ -220,6 +220,30 @@ about the call site, and escalate it if you want a guarantee:
 dotnet_diagnostic.MP0002.severity = error
 ```
 
+### `ProjectTo` for `IQueryable`
+
+Mapping entities you already loaded is the expensive way to build a DTO. `ProjectTo`
+pushes the mapping into the query, so the database returns only the columns you asked
+for:
+
+```csharp
+var dtos = db.Orders
+    .Where(o => o.Total > 100)
+    .ProjectTo<OrderDto>()
+    .ToList();
+```
+
+The generator emits `Queryable.Select(q, src => new OrderDto { ... })`, which the C#
+compiler turns into the expression tree — so there is no runtime pipeline building
+expressions, and flattening becomes a `JOIN` rather than a second round trip.
+Operators composed after `ProjectTo` stay in the same query.
+
+Two caveats worth knowing. `ProjectTo` has **no reflection fallback** — it needs the
+generator, and says so with `MP0002`. And a few things that map fine with `MapTo`
+cannot be translated by a database: `[MapConvert]` converters and `string` → `enum`
+among them. Those currently surface as a provider error at query time rather than a
+build warning.
+
 ### Trimming and Native AOT
 
 MapperPillow is built for it — the generated interceptors are plain typed assignments,
@@ -249,8 +273,9 @@ is no runtime reflection for covered call sites. See
 
 ## Current limitations
 
-MapperPillow is young. The main gap is `ProjectTo` for `IQueryable` (EF Core
-translation), which is a separate expression-tree pipeline.
+MapperPillow is young. `ProjectTo` works and is verified against EF Core, but its
+translatable subset is not yet enforced at build time: `[MapConvert]` converters and
+`string` → `enum` compile into the projection and then fail in the provider.
 
 Anything the generator can't handle falls back to a reflection-based mapper. That
 fallback is intentionally minimal — name + assignable type only — so it does **not**

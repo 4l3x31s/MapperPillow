@@ -33,6 +33,12 @@ public static class ReflectionFallback
         "<MapperPillowEnableReflectionFallback>false</MapperPillowEnableReflectionFallback> " +
         "to remove the fallback from the published app.";
 
+    internal const string ProjectToMessage =
+        "MapperPillow: ProjectTo requires the source generator and has no runtime fallback. " +
+        "Enable the generator with " +
+        "<InterceptorsNamespaces>$(InterceptorsNamespaces);MapperPillow.Generated</InterceptorsNamespaces>, " +
+        "and check the build for an MP0002 warning naming this call site.";
+
     internal const string DisabledMessage =
         "MapperPillow: this call site was not intercepted, and the reflection fallback is disabled. " +
         "Enable the generator with " +

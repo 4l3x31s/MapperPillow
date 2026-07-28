@@ -198,6 +198,64 @@ public class GeneratorTests
     }
 
     [Fact]
+    public void ProjectTo_emits_a_Queryable_Select_the_compiler_turns_into_an_expression_tree()
+    {
+        var result = GeneratorHarness.Run(
+            """
+            using MapperPillow;
+            using System.Linq;
+            namespace Demo;
+            public class Order { public int Id { get; set; } }
+            public class OrderDto { public int Id { get; set; } }
+            public static class Run { public static IQueryable<OrderDto> Do(IQueryable<Order> q) => q.ProjectTo<OrderDto>(); }
+            """);
+
+        var generated = result.GeneratedSources.Single().SourceText.ToString();
+        // Queryable.Select takes Expression<Func<,>>, so the emitted lambda becomes an
+        // expression tree at compile time — nothing is composed at runtime.
+        Assert.Contains("global::System.Linq.Queryable.Select(typed, src =>", generated);
+        Assert.Contains("new global::Demo.OrderDto { Id = src.Id }", generated);
+    }
+
+    [Fact]
+    public void ProjectTo_interceptor_takes_IQueryable_not_object()
+    {
+        // The interceptor's signature has to match the intercepted method's, and
+        // ProjectTo is declared on IQueryable rather than object.
+        var result = GeneratorHarness.Run(
+            """
+            using MapperPillow;
+            using System.Linq;
+            namespace Demo;
+            public class Order { public int Id { get; set; } }
+            public class OrderDto { public int Id { get; set; } }
+            public static class Run { public static IQueryable<OrderDto> Do(IQueryable<Order> q) => q.ProjectTo<OrderDto>(); }
+            """);
+
+        var generated = result.GeneratedSources.Single().SourceText.ToString();
+        Assert.Contains("global::System.Linq.IQueryable<global::Demo.OrderDto> Map_0(this global::System.Linq.IQueryable source)", generated);
+    }
+
+    [Fact]
+    public void ProjectTo_flattens_like_MapTo_does()
+    {
+        var result = GeneratorHarness.Run(
+            """
+            using MapperPillow;
+            using System.Linq;
+            namespace Demo;
+            public class Customer { public string City { get; set; } = ""; }
+            public class Order { public Customer Customer { get; set; } = new(); }
+            public class OrderDto { public string CustomerCity { get; set; } = ""; }
+            public static class Run { public static IQueryable<OrderDto> Do(IQueryable<Order> q) => q.ProjectTo<OrderDto>(); }
+            """);
+
+        var generated = result.GeneratedSources.Single().SourceText.ToString();
+        Assert.Contains("src.Customer", generated);
+        Assert.Contains("CustomerCity =", generated);
+    }
+
+    [Fact]
     public void No_MP0002_when_the_call_site_is_intercepted()
     {
         var result = GeneratorHarness.Run(

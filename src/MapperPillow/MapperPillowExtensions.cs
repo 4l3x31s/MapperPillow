@@ -28,6 +28,28 @@ public static class MapperPillowExtensions
     public static TDestination Map<TDestination>(this object source) => Fallback<TDestination>(source);
 
     /// <summary>
+    /// Projects <paramref name="source"/> into <typeparamref name="TDestination"/> as a
+    /// LINQ projection, so the query provider translates the mapping instead of
+    /// materialising rows and mapping them afterwards.
+    /// </summary>
+    /// <remarks>
+    /// Unlike <see cref="MapTo{TDestination}"/> this has no runtime fallback, by
+    /// design. Building the projection at runtime would mean composing expression
+    /// trees dynamically — the reflection-shaped cost this library exists to avoid,
+    /// and not Native AOT safe. The generator emits the <c>Select</c> instead, and
+    /// reports MP0002 when it cannot.
+    /// </remarks>
+    public static IQueryable<TDestination> ProjectTo<TDestination>(this IQueryable source)
+    {
+        if (source is null)
+        {
+            throw new ArgumentNullException(nameof(source));
+        }
+
+        throw new NotSupportedException(ReflectionFallback.ProjectToMessage);
+    }
+
+    /// <summary>
     /// The non-intercepted path. Reaching this at runtime means the generator could
     /// not produce code for the call site (see MP0002) or interceptors are not
     /// enabled for the consuming project.

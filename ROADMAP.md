@@ -5,16 +5,17 @@ architecture behind these items.
 
 ## Status
 
-Feature-complete for compile-time object mapping, **except `ProjectTo`**. All mapping
-runs through generated interceptors (no runtime reflection) for covered call sites.
-Anything not covered is reported at build time as `MP0002` and falls back to a
-reflection mapper that is **not** feature-equivalent (see "Known characteristics").
-Trimming and Native AOT are supported: trimmed/AOT builds drop the fallback entirely.
-The NuGet package is built and verified (it carries the generator as an analyzer), but
-not yet published to nuget.org.
+Feature-complete for compile-time object mapping, including `ProjectTo` for
+`IQueryable`. All mapping runs through generated interceptors (no runtime reflection)
+for covered call sites. Anything not covered is reported at build time as `MP0002` and
+falls back to a reflection mapper that is **not** feature-equivalent (see "Known
+characteristics"). Trimming and Native AOT are supported: trimmed/AOT builds drop the
+fallback entirely. The NuGet package is built and verified (it carries the generator as
+an analyzer), but not yet published to nuget.org.
 
-Tests: 31 behavioral + 13 generator, green. Build clean, 0 warnings, including under
-the trim/AOT analyzers (`IsAotCompatible`).
+Tests: 33 behavioral × 3 target frameworks + 16 generator + 3 EF Core translation,
+green. Build clean, 0 warnings, including under the trim/AOT analyzers
+(`IsAotCompatible`).
 
 ## Done
 
@@ -35,17 +36,39 @@ the trim/AOT analyzers (`IsAotCompatible`).
 - [x] Trimming / Native AOT readiness: `IsAotCompatible`, the
       `MapperPillow.EnableReflectionFallback` feature switch, and a `build/*.targets`
       that turns the fallback off by default for `PublishTrimmed`/`PublishAot`
-- [x] Two-tier tests (behavioral + in-memory generator harness)
+- [x] `ProjectTo<T>()` for `IQueryable` — emits `Queryable.Select(q, src => new Dst
+      { ... })`, which the C# compiler turns into the expression tree. Being a
+      compile-time mapper means there is no runtime expression pipeline to build at
+      all. Verified against EF Core + SQLite: the projection reaches SQL, flattened
+      members become a JOIN rather than a second round trip, and operators composed
+      after `ProjectTo` stay in the same query
+- [x] Two-tier tests (behavioral + in-memory generator harness), plus EF Core
+      translation tests in their own project
 - [x] README (EN/ES) + usage guide
 
 ## Pending
 
-### 1. `ProjectTo<T>()` for `IQueryable` (the big one)
+### 1. `ProjectTo<T>()` — hardening the translatable subset
 
-EF Core translation. This is **not** an interceptor feature — it needs a separate
-expression-tree pipeline that builds a provider-translatable `Expression` (like
-AutoMapper's `ProjectTo` / the `QueryableExtensions` in the original). Largest
-remaining piece; effectively its own milestone.
+The core is done (see "Done"), and it turned out to be *far* smaller than expected.
+This entry used to claim `ProjectTo` was "not an interceptor feature" and needed a
+separate expression-tree pipeline like AutoMapper's `QueryableExtensions`. That is
+true for a **runtime** mapper, whose configuration only exists at runtime. A
+compile-time mapper already knows both types, so it can emit
+`Queryable.Select(q, src => new Dst { ... })` as ordinary C# and let the compiler
+build the expression tree — no pipeline, no caching, no dynamic code.
+
+What is left is the subset problem: some things the planner emits compile into a
+valid expression tree but no provider can translate.
+
+- [ ] Diagnose untranslatable constructs at the `ProjectTo` call site rather than
+      letting the provider throw at query time. Known cases: `[MapConvert]`
+      converters (`new C().Convert(x)`), `string` → `enum` (`Enum.Parse`), and
+      possibly `Nullable<T>.GetValueOrDefault()`
+- [ ] EF Core coverage for nested objects and collection-valued properties inside a
+      projection (both work for `MapTo`; untested through a provider)
+- [ ] Decide whether `ProjectTo` should reject, or silently allow, members that only
+      a client-side evaluation could satisfy
 
 ### 2. Packaging & release (infrastructure, not features)
 

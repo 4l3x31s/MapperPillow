@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <IsPackable>false</IsPackable>
+    <!-- Deliberately no IsAotCompatible: EF Core is not trim-safe, and turning the
+         analyzers on here would bury the main suite's zero-IL-warning guarantee in
+         warnings that belong to EF, not to MapperPillow. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="9.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\MapperPillow\MapperPillow.csproj" />
+    <ProjectReference Include="..\..\src\MapperPillow.Generator\MapperPillow.Generator.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false"
+                      UndefineProperties="PublishTrimmed;PublishAot;RuntimeIdentifier;SelfContained" />
+  </ItemGroup>
+
+  <Import Project="..\..\src\MapperPillow\build\MapperPillow.targets" />
+
+</Project>

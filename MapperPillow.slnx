@@ -9,5 +9,6 @@
   <Project Path="src/MapperPillow.Generator/MapperPillow.Generator.csproj" />
   <Project Path="src/MapperPillow/MapperPillow.csproj" />
   <Project Path="tests/MapperPillow.Generator.Tests/MapperPillow.Generator.Tests.csproj" />
+  <Project Path="tests/MapperPillow.EfCore.Tests/MapperPillow.EfCore.Tests.csproj" />
   <Project Path="tests/MapperPillow.Tests/MapperPillow.Tests.csproj" />
 </Solution>

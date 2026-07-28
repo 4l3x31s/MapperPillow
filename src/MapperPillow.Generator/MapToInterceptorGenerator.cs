@@ -66,7 +66,7 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
         {
             Expression: MemberAccessExpressionSyntax
             {
-                Name: GenericNameSyntax { Identifier.ValueText: "MapTo" or "Map" }
+                Name: GenericNameSyntax { Identifier.ValueText: "MapTo" or "Map" or "ProjectTo" }
             }
         };
 
@@ -83,11 +83,13 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
         // Anything that is not MapperPillow's own surface is none of our business:
         // no interceptor, and no diagnostic either.
         if (ctx.SemanticModel.GetSymbolInfo(invocation, ct).Symbol is not IMethodSymbol method ||
-            (method.Name != "MapTo" && method.Name != "Map") ||
+            (method.Name != "MapTo" && method.Name != "Map" && method.Name != "ProjectTo") ||
             method.ContainingType?.ToDisplayString() != "MapperPillow.MapperPillowExtensions")
         {
             return null;
         }
+
+        var isProjection = method.Name == "ProjectTo";
 
         var destType = ctx.SemanticModel.GetTypeInfo(generic.TypeArgumentList.Arguments[0], ct).Type;
         var srcType = ctx.SemanticModel.GetTypeInfo(memberAccess.Expression, ct).Type;
@@ -118,22 +120,71 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
             return Candidate.Skip(call, "this call site has no interceptable location", location);
         }
 
-        var plan = BuildBody(ctx.SemanticModel.Compilation, srcType, destType);
+        var plan = isProjection
+            ? BuildProjectionBody(ctx.SemanticModel.Compilation, srcType, destType)
+            : BuildBody(ctx.SemanticModel.Compilation, srcType, destType);
         if (plan is null)
         {
             return Candidate.Skip(
                 call,
-                $"no compile-time mapping could be built from '{srcType.ToDisplayString(Short)}' to '{destType.ToDisplayString(Short)}'",
+                isProjection
+                    ? $"no compile-time projection could be built from '{srcType.ToDisplayString(Short)}' to '{destType.ToDisplayString(Short)}'"
+                    : $"no compile-time mapping could be built from '{srcType.ToDisplayString(Short)}' to '{destType.ToDisplayString(Short)}'",
                 location);
         }
 
+        var returnType = isProjection
+            ? $"global::System.Linq.IQueryable<{destType.ToDisplayString(FullyQualified)}>"
+            : destType.ToDisplayString(FullyQualified);
+
         return Candidate.Intercepted(new CallSite(
-            destType.ToDisplayString(FullyQualified),
+            returnType,
+            isProjection ? "global::System.Linq.IQueryable" : "object",
             call,
             plan.Value.Body,
             plan.Value.UnmappedCsv,
             interceptable.GetInterceptsLocationAttributeSyntax(),
             location));
+    }
+
+    /// <summary>
+    /// Builds the body of a <c>ProjectTo</c> interceptor: a <c>Queryable.Select</c>
+    /// whose lambda the C# compiler converts into an expression tree, so the LINQ
+    /// provider translates the mapping rather than the mapping running per row.
+    /// </summary>
+    /// <remarks>
+    /// This is where being a compile-time mapper pays off most. A runtime mapper has
+    /// to compose the projection as expression-tree objects; here the projection is
+    /// ordinary C# that the compiler turns into the tree for free — nothing to build,
+    /// nothing to cache, and nothing that needs dynamic code under Native AOT.
+    /// </remarks>
+    private static (string Body, string UnmappedCsv)? BuildProjectionBody(
+        Compilation compilation, ITypeSymbol source, ITypeSymbol destination)
+    {
+        if (EnumerableElement(source) is not INamedTypeSymbol srcElem ||
+            destination is not INamedTypeSymbol destNamed ||
+            IsFileLocal(srcElem) || IsFileLocal(destNamed))
+        {
+            return null;
+        }
+
+        var visited = ImmutableHashSet.Create(StringComparer.Ordinal, destNamed.ToDisplayString(FullyQualified));
+        var construction = BuildConstruction(compilation, srcElem, destNamed, "src", visited);
+        if (construction is null)
+        {
+            return null;
+        }
+
+        var srcDisplay = srcElem.ToDisplayString(FullyQualified);
+
+        var sb = new StringBuilder();
+        sb.AppendLine("            if (source is null) throw new global::System.ArgumentNullException(nameof(source));");
+        sb.AppendLine($"            var typed = (global::System.Linq.IQueryable<{srcDisplay}>)source;");
+        sb.AppendLine($"            var result = global::System.Linq.Queryable.Select(typed, src => {construction.Value.Expr});");
+        sb.AppendLine("            global::MapperPillow.MapperPillowTelemetry.MarkIntercepted();");
+        sb.Append("            return result;");
+
+        return (sb.ToString(), UnmappedFrom(destNamed, construction.Value.Mapped));
     }
 
     private static (string Body, string UnmappedCsv)? BuildBody(Compilation compilation, ITypeSymbol source, ITypeSymbol destination)
@@ -769,7 +820,7 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
         }
 
         var groups = callSites
-            .GroupBy(c => (c.ReturnType, c.Body))
+            .GroupBy(c => (c.ReturnType, c.SourceParameter, c.Body))
             .ToArray();
 
         var sb = new StringBuilder();
@@ -798,7 +849,7 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
                 sb.AppendLine("        " + callSite.AttributeText);
             }
 
-            sb.AppendLine($"        public static {group.Key.ReturnType} Map_{index}(this object source)");
+            sb.AppendLine($"        public static {group.Key.ReturnType} Map_{index}(this {group.Key.SourceParameter} source)");
             sb.AppendLine("        {");
             sb.AppendLine(group.Key.Body);
             sb.AppendLine("        }");
@@ -812,8 +863,13 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
         spc.AddSource("MapperPillow.Interceptors.g.cs", SourceText.From(sb.ToString(), Encoding.UTF8));
     }
 
+    /// <param name="SourceParameter">
+    /// The interceptor's parameter type. It must match the intercepted method's own
+    /// signature: <c>object</c> for MapTo/Map, <c>IQueryable</c> for ProjectTo.
+    /// </param>
     private sealed record CallSite(
-        string ReturnType, string Call, string Body, string UnmappedCsv, string AttributeText, Location Location);
+        string ReturnType, string SourceParameter, string Call, string Body, string UnmappedCsv,
+        string AttributeText, Location Location);
 
     /// <summary>A call site that could not be generated, and why.</summary>
     private sealed record SkippedCallSite(string Call, string Reason, Location Location);

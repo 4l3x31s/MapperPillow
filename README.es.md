@@ -227,6 +227,30 @@ como un reporte de error sobre la llamada, y escálalo si quieres una garantía:
 dotnet_diagnostic.MP0002.severity = error
 ```
 
+### `ProjectTo` para `IQueryable`
+
+Mapear entidades ya cargadas es la forma cara de construir un DTO. `ProjectTo` empuja
+el mapeo dentro de la consulta, así la base devuelve sólo las columnas que pediste:
+
+```csharp
+var dtos = db.Orders
+    .Where(o => o.Total > 100)
+    .ProjectTo<OrderDto>()
+    .ToList();
+```
+
+El generador emite `Queryable.Select(q, src => new OrderDto { ... })`, que el
+compilador de C# convierte en el árbol de expresión — así que no hay pipeline en
+tiempo de ejecución construyendo expresiones, y el aplanamiento se resuelve con un
+`JOIN` en lugar de un segundo viaje a la base. Los operadores que compongas después de
+`ProjectTo` siguen dentro de la misma consulta.
+
+Dos advertencias que conviene saber. `ProjectTo` **no tiene fallback por reflexión**:
+necesita el generador, y lo avisa con `MP0002`. Y algunas cosas que `MapTo` mapea sin
+problema no las puede traducir una base de datos: los conversores `[MapConvert]` y
+`string` → `enum`, entre otras. Hoy aparecen como error del proveedor al ejecutar la
+consulta, no como advertencia de compilación.
+
 ### Trimming y Native AOT
 
 MapperPillow está construido para eso: los interceptores generados son asignaciones
@@ -258,8 +282,10 @@ cubiertas. Consulta [DESIGN.md](DESIGN.md) para la arquitectura completa.
 
 ## Limitaciones actuales
 
-MapperPillow es joven. El hueco principal es `ProjectTo` para `IQueryable`
-(traducción a EF Core), que es un pipeline de árboles de expresión aparte.
+MapperPillow es joven. `ProjectTo` funciona y está verificado contra EF Core, pero su
+subconjunto traducible todavía no se valida en compilación: los conversores
+`[MapConvert]` y `string` → `enum` entran en la proyección y después fallan en el
+proveedor.
 
 Lo que el generador no puede manejar recurre a un mapeador basado en reflexión. Ese
 fallback es intencionalmente mínimo —solo nombre y tipo asignable—, así que **no**
