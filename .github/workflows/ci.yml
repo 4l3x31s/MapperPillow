@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  build:
+    name: Build and test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The library and the behavioral suite multi-target net8.0/9.0/10.0, so every
+      # runtime has to be present or `dotnet test` cannot run two thirds of the suite.
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
+
+      - name: Build
+        run: dotnet build MapperPillow.slnx -c Release
+
+      - name: Test
+        run: dotnet test MapperPillow.slnx -c Release --no-build
+
+  verify-package:
+    name: Verify package (trimming and Native AOT)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
+
+      # Native AOT links with the platform toolchain; on Linux that is clang + zlib.
+      - name: Install the Native AOT prerequisites
+        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
+
+      # This is the job that matters. `dotnet test` cannot tell you that the package
+      # shipped without its generator, or that every call site quietly degraded to
+      # reflection — both stay green until a consumer publishes trimmed. The script
+      # consumes the real .nupkg and asserts on behaviour instead.
+      - name: Verify the package end to end
+        shell: pwsh
+        run: ./eng/Verify-Package.ps1

@@ -68,7 +68,14 @@ remaining piece; effectively its own milestone.
       that the trimmer honours it and still removes the reflection branch (the trimmed
       `MapperPillow.dll` drops from 11.7 KB to 5.1 KB and no longer contains the
       fallback's strings). The behavioral suite runs on all three targets.
-- [ ] Versioning (e.g. MinVer), a git remote, and CI (build + test)
+- [x] CI (`.github/workflows/ci.yml`): build and test on Linux and Windows, plus a
+      package verification job. `eng/Verify-Package.ps1` packs, consumes the real
+      `.nupkg` from a local feed with a bare `PackageReference`, and asserts the
+      things `dotnet test` structurally cannot — that the generator shipped, that a
+      call site is served by the interceptor rather than reflection, that a trimmed
+      publish is IL-warning-free, that the trimmer really removed the reflection
+      branch, and that a Native AOT binary still maps correctly. Runs locally too.
+- [ ] Versioning (e.g. MinVer) and a git remote
 - [ ] Publish to NuGet
 
 ### 3. Nice-to-have mapping features

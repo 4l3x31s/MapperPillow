@@ -282,7 +282,22 @@ src/MapperPillow.Generator   Roslyn source generator             — netstandard
 tests/MapperPillow.Tests             Behavioral tests            — net8.0/9.0/10.0
 tests/MapperPillow.Generator.Tests   In-memory generator tests   — net10.0
 samples/MapperPillow.Sample  Runnable example                    — net10.0
+eng/Verify-Package.ps1       End-to-end package verification
 ```
+
+### Verifying the package
+
+`dotnet test` cannot tell you that the package shipped without its generator, or
+that every call site quietly fell back to reflection — both stay green until a
+consumer publishes trimmed. This does check that, by consuming the real `.nupkg`
+the way a user would:
+
+```bash
+pwsh ./eng/Verify-Package.ps1              # every target framework, including Native AOT
+pwsh ./eng/Verify-Package.ps1 -SkipAot     # skip the slow native link step
+```
+
+CI runs it on every push (`.github/workflows/ci.yml`).
 
 ## License
 

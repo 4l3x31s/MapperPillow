@@ -42,6 +42,12 @@ Requires the .NET 10 SDK. The library and the behavioral tests multi-target
 report names the TFM. Run a single test with
 `dotnet test tests/MapperPillow.Tests --filter "FullyQualifiedName~<name>"`.
 
+Changes to packaging, the shipped `build/*.targets`, the feature switch, or the
+generator's output shape are **not** covered by `dotnet test` — a package can ship
+without its generator, or degrade every call site to reflection, and stay green.
+Run `pwsh ./eng/Verify-Package.ps1` (add `-SkipAot` to skip the slow native link),
+which consumes the real `.nupkg` and asserts on behaviour. CI runs it per push.
+
 `net8.0` has no `FeatureSwitchDefinitionAttribute`; `src/MapperPillow/Polyfills.cs`
 declares an internal one under `#if !NET9_0_OR_GREATER`. The trimmer matches it by
 full type name, so do not rename or move it out of
