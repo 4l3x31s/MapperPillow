@@ -21,10 +21,38 @@ métodos ofrece y cómo usar cada uno. Está pensada para alguien que recién em
 
 ---
 
-## 1. Instalar desde el proyecto
+## 1. Instalar
 
-MapperPillow todavía no está publicado en NuGet. Mientras tanto, se consume
-**referenciando los proyectos** desde tu solución. Necesitas **dos** referencias:
+### Desde el paquete (recomendado)
+
+```bash
+dotnet add package MapperPillow
+```
+
+El paquete lleva el generador adentro, en `analyzers/dotnet/cs`, así que **una sola
+referencia alcanza**. No hace falta cablear el analizador por separado.
+
+MapperPillow todavía no está en nuget.org, pero el paquete ya se construye y está
+verificado de punta a punta. Para usarlo hoy, generalo y consumilo desde un feed local:
+
+```bash
+dotnet pack src/MapperPillow -c Release
+# -> src/MapperPillow/bin/Release/MapperPillow.1.0.0.nupkg
+```
+
+```xml
+<!-- nuget.config de tu proyecto -->
+<configuration>
+  <packageSources>
+    <add key="local" value="../ruta/a/MapperPillow/src/MapperPillow/bin/Release" />
+  </packageSources>
+</configuration>
+```
+
+### Desde el proyecto (alternativa)
+
+Si preferís referenciar los proyectos desde tu solución, necesitás **dos**
+referencias:
 
 1. La librería en tiempo de ejecución (`MapperPillow`).
 2. El generador de código, referenciado **como analizador** (`MapperPillow.Generator`).
@@ -42,16 +70,22 @@ En el `.csproj` de tu proyecto agrega:
 </ItemGroup>
 ```
 
-> **Importante:** la segunda referencia (el generador) es obligatoria. Sin ella,
-> `MapTo` funciona por reflexión, pero no se genera código en tiempo de compilación
-> ni aparece el diagnóstico `MP0001`. La referencia al generador **no** se hereda de
-> forma automática desde la librería, por eso hay que agregarla explícitamente.
+> **Importante:** la segunda referencia (el generador) es obligatoria en esta
+> modalidad. Sin ella, `MapTo` funciona por reflexión pero no se genera código en
+> tiempo de compilación, no aparecen los diagnósticos `MP0001`/`MP0002`, y una
+> publicación recortada o Native AOT lanzará excepción. La referencia al generador
+> **no** se hereda automáticamente desde la librería vía `ProjectReference`; el
+> paquete NuGet sí la trae resuelta.
 
 ---
 
 ## 2. Habilitar los interceptores
 
-Este es el paso que más se olvida. Agrega el espacio de nombres generado al
+**Si instalaste el paquete, no tenés que hacer nada.** El `build/MapperPillow.targets`
+que viene adentro inscribe tu proyecto en el espacio de nombres de los interceptores
+automáticamente.
+
+Si en cambio referencias los proyectos (la modalidad alternativa de §1), agregalo al
 `PropertyGroup` de tu `.csproj`:
 
 ```xml
@@ -60,8 +94,25 @@ Este es el paso que más se olvida. Agrega el espacio de nombres generado al
 </PropertyGroup>
 ```
 
-- Si lo agregas: los `MapTo` se reemplazan por código generado (sin reflexión).
-- Si lo olvidas: `MapTo` sigue funcionando por reflexión (más lento, sin `MP0001`).
+> **Ojo:** este paso no es opcional, y omitirlo no te deja en un modo degradado sino
+> con el build roto. El generador emite su archivo de interceptores siempre, y sin el
+> espacio de nombres el compilador lo rechaza con el error **CS9137**. No hay
+> degradación silenciosa a reflexión.
+
+### Desactivar la generación
+
+Si necesitás apagar la generación en compilación —por ejemplo para aislar un bug del
+generador— hay una vía de escape:
+
+```xml
+<PropertyGroup>
+  <MapperPillowEnableInterceptors>false</MapperPillowEnableInterceptors>
+</PropertyGroup>
+```
+
+Esto descarga el generador y te deja con el fallback por reflexión. No es un modo
+soportado: ese fallback **no** es equivalente al código generado (ver §"Limitaciones")
+y una publicación recortada o Native AOT lanzará excepción.
 
 Requisito: un SDK de .NET con **C# 12 o superior**. Esta versión apunta a `net10.0`.
 
@@ -124,16 +175,15 @@ public static TDestination Map<TDestination>(this object source);
 ```
 
 Alias de cortesía con la misma semántica que `MapTo`. Existe para facilitar la
-migración desde AutoMapper, donde el método se llama `Map`. Internamente llama a
-`MapTo`.
+migración desde AutoMapper, donde el método se llama `Map`.
 
 ```csharp
 var dto = user.Map<UserDto>();   // idéntico a user.MapTo<UserDto>()
 ```
 
-> Nota: en esta versión, `Map<T>` (por ser genérico) se resuelve por reflexión; la
-> generación en tiempo de compilación se aplica a las llamadas directas a `MapTo<T>`
-> con tipos concretos. Para el camino óptimo, usa `MapTo`.
+El generador intercepta ambos nombres por igual, así que el código migrado obtiene la
+misma ruta de tiempo de compilación que `MapTo`. `MapTo` sigue siendo la forma
+recomendada en código nuevo, por claridad.
 
 ---
 

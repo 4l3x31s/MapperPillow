@@ -49,16 +49,28 @@ mapear en tiempo de compilación**, no en tiempo de ejecución.
 
 ## Primeros pasos
 
-### 1. Referencia el proyecto
+### 1. Agrega el paquete
 
-> **Estado:** MapperPillow es temprano (v0) y aún no está en NuGet. Por ahora se usa
-> referenciando el proyecto directamente. Consulta la
-> [guía de uso](docs/guia-de-uso.md#1-instalar-desde-el-proyecto) para el detalle
-> exacto del `.csproj`.
+```bash
+dotnet add package MapperPillow
+```
 
-### 2. Habilita los interceptores (una vez, por proyecto)
+El paquete incluye el generador (`analyzers/dotnet/cs`), así que con una sola
+referencia alcanza: no hay que cablear el analizador aparte.
 
-Agrega el espacio de nombres generado por MapperPillow al `.csproj` de tu proyecto:
+> **Estado:** MapperPillow es temprano (v0) y todavía no está en nuget.org. El paquete
+> ya se construye (`dotnet pack src/MapperPillow -c Release`) y está verificado de
+> punta a punta, incluidas publicaciones recortadas y Native AOT. Hasta que se
+> publique, consume ese `.nupkg` desde un feed local o referencia los proyectos
+> directamente. Consulta la
+> [guía de uso](docs/guia-de-uso.md#1-instalar-desde-el-proyecto) para el detalle.
+
+### 2. Habilitar los interceptores — nada que hacer
+
+El paquete inscribe tu proyecto en el espacio de nombres de los interceptores por vos,
+desde el `build/MapperPillow.targets` que incluye. No hay paso de configuración.
+
+Si referencias los **proyectos** en lugar del paquete, agrégalo a mano:
 
 ```xml
 <PropertyGroup>
@@ -66,9 +78,17 @@ Agrega el espacio de nombres generado por MapperPillow al `.csproj` de tu proyec
 </PropertyGroup>
 ```
 
-> Si omites este paso, `MapTo` sigue funcionando —recurre a reflexión— pero pierdes la
-> generación en tiempo de compilación y el diagnóstico `MP0001`. Haz este paso para
-> obtener los beneficios reales.
+> Esto no es opcional. El generador siempre emite su archivo de interceptores, y sin el
+> espacio de nombres el compilador lo rechaza con **CS9137**: la compilación falla. No
+> recurre silenciosamente a reflexión.
+
+Para desactivar del todo la generación en compilación (una vía de escape, no un modo
+soportado — obtienes el fallback por reflexión, que no es equivalente, y las
+publicaciones recortadas o AOT lanzarán excepción):
+
+```xml
+<MapperPillowEnableInterceptors>false</MapperPillowEnableInterceptors>
+```
 
 ### 3. Mapea
 
@@ -106,7 +126,8 @@ que el cambio sea mínimo:
 var dto = user.Map<UserDto>();   // mismo resultado que MapTo<UserDto>()
 ```
 
-`MapTo` es la forma recomendada en código nuevo.
+Ambos se interceptan igual en tiempo de compilación: el código migrado obtiene la ruta
+generada, no reflexión. `MapTo` es la forma recomendada en código nuevo.
 
 ### Colecciones y arrays
 
@@ -183,6 +204,47 @@ Para convertir los miembros sin mapear en un error de compilación, agrega a tu
 dotnet_diagnostic.MP0001.severity = error
 ```
 
+### Seguridad en compilación: el diagnóstico `MP0002`
+
+Un mapeador de tiempo de compilación nunca debería convertirse en uno de tiempo de
+ejecución en silencio. Cuando el generador no puede producir código para una llamada,
+lo dice — y dice por qué:
+
+```
+warning MP0002: MapTo<Dst> cannot be generated at compile time (no compile-time
+mapping could be built from 'Src' to 'Dst'); it falls back to runtime reflection,
+which is not trimming/Native AOT safe and supports neither flattening, [MapFrom],
+[MapConvert], nor constructor-based destinations
+```
+
+Ese fallback es una red de seguridad, **no** una segunda implementación: solo copia
+propiedades públicas que coincidan por nombre con un tipo asignable. Trata `MP0002`
+como un reporte de error sobre la llamada, y escálalo si quieres una garantía:
+
+```ini
+[*.cs]
+dotnet_diagnostic.MP0002.severity = error
+```
+
+### Trimming y Native AOT
+
+MapperPillow está construido para eso: los interceptores generados son asignaciones
+tipadas comunes, así que no hay nada que un trimmer pueda arruinar.
+
+El único riesgo es el fallback por reflexión: un trimmer no puede analizar reflexión
+sobre un `object`, así que puede eliminar las propiedades que el fallback necesita y
+dejarte un objeto mapeado a medias, sin error. Por eso las publicaciones con
+`PublishTrimmed` o `PublishAot` **eliminan el fallback por completo**. Una llamada que
+lo necesitaba lanza una excepción inmediata en su lugar — y `MP0002` ya te lo había
+advertido en compilación.
+
+Para conservar el fallback en una compilación recortada (asumiendo tú la preservación
+de los tipos mapeados):
+
+```xml
+<MapperPillowEnableReflectionFallback>true</MapperPillowEnableReflectionFallback>
+```
+
 ---
 
 ## Cómo funciona
@@ -196,9 +258,13 @@ cubiertas. Consulta [DESIGN.md](DESIGN.md) para la arquitectura completa.
 ## Limitaciones actuales
 
 MapperPillow es joven. El hueco principal es `ProjectTo` para `IQueryable`
-(traducción a EF Core), que es un pipeline de árboles de expresión aparte. Lo que el
-generador no puede manejar recurre a un mapeador basado en reflexión, así que sigue
-funcionando — solo que no en tiempo de compilación.
+(traducción a EF Core), que es un pipeline de árboles de expresión aparte.
+
+Lo que el generador no puede manejar recurre a un mapeador basado en reflexión. Ese
+fallback es intencionalmente mínimo —solo nombre y tipo asignable—, así que **no**
+reproduce aplanamiento, `[MapFrom]`, `[MapConvert]`, conversiones ni destinos por
+constructor. Cada llamada que cae ahí se reporta como `MP0002`; trata esas
+advertencias como trabajo pendiente, no como un modo soportado.
 
 Para el panorama completo de lo hecho y lo pendiente (incluido el empaquetado
 NuGet), consulta [ROADMAP.md](ROADMAP.md).

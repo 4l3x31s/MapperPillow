@@ -1,6 +1,37 @@
 <Project>
 
   <!--
+    Opt the consuming project into the interceptors MapperPillow emits.
+
+    This is not optional plumbing: the generator always emits its interceptor file, and
+    without this namespace the C# compiler rejects it with error CS9137 — the build
+    fails outright. Requiring every consumer to paste it by hand made "install the
+    package" a broken first build.
+
+    Set <MapperPillowEnableInterceptors>false</MapperPillowEnableInterceptors> to opt
+    out. That is an escape hatch, not a supported mode: MapperPillow then runs entirely
+    on the runtime reflection fallback, which is neither feature-equivalent to the
+    generated code nor trimming/Native AOT safe (see below).
+  -->
+  <PropertyGroup Condition="'$(MapperPillowEnableInterceptors)' != 'false'">
+    <InterceptorsNamespaces>$(InterceptorsNamespaces);MapperPillow.Generated</InterceptorsNamespaces>
+  </PropertyGroup>
+
+  <!--
+    Opting out has to unload the generator too, not just drop the namespace: the
+    generator emits its interceptor file unconditionally, and that file does not
+    compile without the namespace (CS9137). Dropping one without the other would turn
+    the opt-out into a broken build.
+  -->
+  <Target Name="_MapperPillowRemoveGenerator"
+          BeforeTargets="CoreCompile"
+          Condition="'$(MapperPillowEnableInterceptors)' == 'false'">
+    <ItemGroup>
+      <Analyzer Remove="@(Analyzer->WithMetadataValue('Filename','MapperPillow.Generator'))" />
+    </ItemGroup>
+  </Target>
+
+  <!--
     MapperPillow's runtime reflection fallback is not trimming/Native AOT safe: the
     trimmer cannot see through reflection over an `object`, so it may remove the very
     members the fallback needs and the mapping silently returns a half-populated

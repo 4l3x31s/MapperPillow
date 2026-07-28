@@ -49,17 +49,25 @@ at runtime.
 
 ### 1. Add the package
 
-> **Status:** MapperPillow is early (v0) and not on NuGet yet. For now, reference the
-> project directly (see [Building from source](#building-from-source)). Once
-> published, installation will be:
-
 ```bash
 dotnet add package MapperPillow
 ```
 
-### 2. Enable interceptors (one-time, per project)
+The package carries the source generator with it (`analyzers/dotnet/cs`), so one
+reference is all you need — no separate analyzer wiring.
 
-Add the MapperPillow generated namespace to your consuming project's `.csproj`:
+> **Status:** MapperPillow is early (v0) and not on nuget.org yet. The package builds
+> today (`dotnet pack src/MapperPillow -c Release`) and is verified end-to-end,
+> including trimmed and Native AOT publishes. Until it is published, either consume
+> that `.nupkg` from a local feed or reference the projects directly (see
+> [Building from source](#building-from-source)).
+
+### 2. Enable interceptors — nothing to do
+
+The package opts your project into the interceptors namespace for you, from the
+`build/MapperPillow.targets` it ships. There is no setup step.
+
+If you reference the **projects** instead of the package, add it by hand:
 
 ```xml
 <PropertyGroup>
@@ -67,9 +75,16 @@ Add the MapperPillow generated namespace to your consuming project's `.csproj`:
 </PropertyGroup>
 ```
 
-> If you skip this step, `MapTo` still works — it falls back to reflection — but you
-> lose the compile-time generation and the `MP0001` diagnostic. Do this step to get
-> the real benefits.
+> This is not optional. The generator always emits its interceptor file, and without
+> the namespace the compiler rejects it with **CS9137** — the build fails. It does not
+> quietly fall back to reflection.
+
+To disable compile-time generation entirely (an escape hatch, not a supported mode —
+you get the non-equivalent reflection fallback, and trimmed/AOT builds will throw):
+
+```xml
+<MapperPillowEnableInterceptors>false</MapperPillowEnableInterceptors>
+```
 
 ### 3. Map
 
@@ -107,7 +122,8 @@ the change is minimal:
 var dto = user.Map<UserDto>();   // same result as MapTo<UserDto>()
 ```
 
-`MapTo` is the recommended form in new code.
+Both are intercepted identically at compile time — migrated code gets the generated
+path, not reflection. `MapTo` is the recommended form in new code.
 
 ### Collections and arrays
 
@@ -182,6 +198,44 @@ To make unmapped members a hard build error, add to your `.editorconfig`:
 dotnet_diagnostic.MP0001.severity = error
 ```
 
+### Build-time safety: the `MP0002` diagnostic
+
+A compile-time mapper should never quietly become a runtime one. When the generator
+cannot produce code for a call site, it says so — and says why:
+
+```
+warning MP0002: MapTo<Dst> cannot be generated at compile time (no compile-time
+mapping could be built from 'Src' to 'Dst'); it falls back to runtime reflection,
+which is not trimming/Native AOT safe and supports neither flattening, [MapFrom],
+[MapConvert], nor constructor-based destinations
+```
+
+That fallback is a safety net, **not** a second implementation: it only copies public
+properties matching by name with an assignable type. Treat `MP0002` as a bug report
+about the call site, and escalate it if you want a guarantee:
+
+```ini
+[*.cs]
+dotnet_diagnostic.MP0002.severity = error
+```
+
+### Trimming and Native AOT
+
+MapperPillow is built for it — the generated interceptors are plain typed assignments,
+so there is nothing for a trimmer to get wrong.
+
+The one hazard is the reflection fallback: a trimmer cannot see through reflection over
+an `object`, so it may remove the properties the fallback needs and leave you with a
+silently half-mapped object. So `PublishTrimmed` and `PublishAot` builds **remove the
+fallback entirely**. A call site that needed it throws immediately instead — and
+`MP0002` already told you about it at build time.
+
+To keep the fallback in a trimmed build (you then own preserving the mapped types):
+
+```xml
+<MapperPillowEnableReflectionFallback>true</MapperPillowEnableReflectionFallback>
+```
+
 ---
 
 ## How it works
@@ -195,9 +249,13 @@ is no runtime reflection for covered call sites. See
 ## Current limitations
 
 MapperPillow is young. The main gap is `ProjectTo` for `IQueryable` (EF Core
-translation), which is a separate expression-tree pipeline. Anything the generator
-can't handle falls back to a reflection-based mapper, so it still works — just not at
-compile time.
+translation), which is a separate expression-tree pipeline.
+
+Anything the generator can't handle falls back to a reflection-based mapper. That
+fallback is intentionally minimal — name + assignable type only — so it does **not**
+reproduce flattening, `[MapFrom]`, `[MapConvert]`, conversions, or constructor-based
+destinations. Every call site that lands on it is reported as `MP0002`; treat those
+warnings as work to do, not as a supported mode.
 
 For the full picture of what's done and what's left (including NuGet packaging), see
 [ROADMAP.md](ROADMAP.md).

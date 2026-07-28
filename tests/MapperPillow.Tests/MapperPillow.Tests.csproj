@@ -9,8 +9,6 @@
     <!-- Runs the trim/AOT analyzers over the GENERATED interceptors, which live in
          this project rather than in the library. -->
     <IsAotCompatible>true</IsAotCompatible>
-    <!-- Opt in to interceptors emitted by the MapperPillow generator. -->
-    <InterceptorsNamespaces>$(InterceptorsNamespaces);MapperPillow.Generated</InterceptorsNamespaces>
   </PropertyGroup>
 
   <ItemGroup>
@@ -27,5 +25,10 @@
                       ReferenceOutputAssembly="false"
                       UndefineProperties="PublishTrimmed;PublishAot;RuntimeIdentifier;SelfContained" />
   </ItemGroup>
+
+  <!-- Consume the same targets the NuGet package ships (they opt this project into
+       the interceptors namespace), so a regression there breaks the test suite
+       instead of only surfacing for package consumers. -->
+  <Import Project="..\..\src\MapperPillow\build\MapperPillow.targets" />
 
 </Project>

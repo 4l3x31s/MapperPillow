@@ -56,13 +56,20 @@ write the `[InterceptsLocation]` interceptor). `MapTo`/`Map` live in
 - **The generator project MUST target `netstandard2.0`** (Roslyn requirement). Needs
   an `IsExternalInit` polyfill for `record`; declared diagnostics need
   `AnalyzerReleases.*.md` (RS2008).
-- **Consumers must enable interceptors**: add
-  `<InterceptorsNamespaces>$(InterceptorsNamespaces);MapperPillow.Generated</InterceptorsNamespaces>`
-  and reference the generator as an `Analyzer`. Without it, `MapTo` still works via
-  reflection but nothing is generated.
-- The generator skips **open generics** (`ITypeParameterSymbol`, e.g. the `MapTo<T>`
-  inside the `Map<T>` alias) and **`file`-local types** (can't be referenced from the
-  generated file) — both fall back to reflection. Do not remove those guards.
+- **Interceptors are mandatory, not opt-in.** The generator always emits its
+  interceptor file; without `MapperPillow.Generated` in `<InterceptorsNamespaces>` the
+  compiler rejects it with **CS9137** and the build fails — it does *not* degrade to
+  reflection. `src/MapperPillow/build/MapperPillow.targets` sets the namespace
+  automatically (NuGet consumers, plus the sample and tests, which import it), so do
+  not re-add the property by hand. `<MapperPillowEnableInterceptors>false</>` opts out
+  and must also unload the generator, or the emitted file breaks the build.
+- The generator skips **open generics** (`ITypeParameterSymbol`) and **`file`-local
+  types** (can't be referenced from the generated file) — both fall back to reflection
+  and report **MP0002**. Do not remove those guards.
+- **Never put `[RequiresUnreferencedCode]` on the public `MapTo`/`Map`.** Verified: the
+  trim analyzer reads the original call site, not the interceptor, so it fires IL2026
+  on fully generated call sites too. Trim-safety comes from the
+  `MapperPillow.EnableReflectionFallback` feature switch instead.
 - Tests: `MapperPillow.Generator.Tests` references the generator as a **normal**
   assembly (not analyzer) so it can be instantiated in-memory.
 
