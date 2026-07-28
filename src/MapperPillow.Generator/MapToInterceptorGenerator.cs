@@ -12,32 +12,45 @@ using Microsoft.CodeAnalysis.Text;
 namespace MapperPillow.Generator;
 
 /// <summary>
-/// Replaces each concrete <c>source.MapTo&lt;TDestination&gt;()</c> call with a
-/// compile-time interceptor — no runtime reflection. Supports scalar objects
-/// (parameterless-ctor and constructor-based, e.g. positional records), nested
-/// objects, collections/arrays, collection-valued properties, multi-level
-/// flattening, enums, and per-member attributes (<c>[MapIgnore]</c>, <c>[MapFrom]</c>).
+/// Replaces each concrete <c>source.MapTo&lt;TDestination&gt;()</c> call (and its
+/// <c>Map&lt;TDestination&gt;</c> alias) with a compile-time interceptor — no runtime
+/// reflection. Supports scalar objects (parameterless-ctor and constructor-based,
+/// e.g. positional records), nested objects, collections/arrays, collection-valued
+/// properties, multi-level flattening, enums, and per-member attributes
+/// (<c>[MapIgnore]</c>, <c>[MapFrom]</c>).
 /// Unmapped destination members are reported as MP0001 warnings. Call sites the
-/// generator cannot handle are left to the runtime fallback.
+/// generator cannot handle fall back to runtime reflection and are reported as
+/// MP0002 warnings, because that fallback is neither trim/Native-AOT safe nor
+/// feature-equivalent to the generated code.
 /// </summary>
 [Generator]
 public sealed class MapToInterceptorGenerator : IIncrementalGenerator
 {
     private const int MaxNestingDepth = 6;
     private static readonly SymbolDisplayFormat FullyQualified = SymbolDisplayFormat.FullyQualifiedFormat;
+    private static readonly SymbolDisplayFormat Short = SymbolDisplayFormat.MinimallyQualifiedFormat;
 
     private static readonly DiagnosticDescriptor UnmappedMember = new(
         id: "MP0001",
         title: "Unmapped destination member",
-        messageFormat: "MapTo<{0}> leaves destination member(s) unmapped: {1}",
+        messageFormat: "{0} leaves destination member(s) unmapped: {1}",
         category: "MapperPillow",
         defaultSeverity: DiagnosticSeverity.Warning,
         isEnabledByDefault: true,
         description: "A destination property has no matching source member. Map it, remap it with [MapFrom], or exclude it with [MapIgnore].");
 
+    private static readonly DiagnosticDescriptor NotIntercepted = new(
+        id: "MP0002",
+        title: "Mapping falls back to runtime reflection",
+        messageFormat: "{0} cannot be generated at compile time ({1}); it falls back to runtime reflection, which is not trimming/Native AOT safe and supports neither flattening, [MapFrom], [MapConvert], nor constructor-based destinations",
+        category: "MapperPillow",
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true,
+        description: "The reflection fallback only copies public properties matching by name and assignable type, so it can produce a different result than the generated mapper, and a trimmed or Native AOT build may drop the members it needs. Change the call site so it can be generated, or map explicitly.");
+
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
-        var callSites = context.SyntaxProvider
+        var candidates = context.SyntaxProvider
             .CreateSyntaxProvider(
                 predicate: static (node, _) => IsCandidateMapToCall(node),
                 transform: static (ctx, ct) => GetCallSite(ctx, ct))
@@ -45,16 +58,19 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
             .Select(static (c, _) => c!)
             .Collect();
 
-        context.RegisterSourceOutput(callSites, static (spc, items) => Emit(spc, items));
+        context.RegisterSourceOutput(candidates, static (spc, items) => Emit(spc, items));
     }
 
     private static bool IsCandidateMapToCall(SyntaxNode node) =>
         node is InvocationExpressionSyntax
         {
-            Expression: MemberAccessExpressionSyntax { Name: GenericNameSyntax { Identifier.ValueText: "MapTo" } }
+            Expression: MemberAccessExpressionSyntax
+            {
+                Name: GenericNameSyntax { Identifier.ValueText: "MapTo" or "Map" }
+            }
         };
 
-    private static CallSite? GetCallSite(GeneratorSyntaxContext ctx, CancellationToken ct)
+    private static Candidate? GetCallSite(GeneratorSyntaxContext ctx, CancellationToken ct)
     {
         var invocation = (InvocationExpressionSyntax)ctx.Node;
         var memberAccess = (MemberAccessExpressionSyntax)invocation.Expression;
@@ -64,8 +80,10 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
             return null;
         }
 
+        // Anything that is not MapperPillow's own surface is none of our business:
+        // no interceptor, and no diagnostic either.
         if (ctx.SemanticModel.GetSymbolInfo(invocation, ct).Symbol is not IMethodSymbol method ||
-            method.Name != "MapTo" ||
+            (method.Name != "MapTo" && method.Name != "Map") ||
             method.ContainingType?.ToDisplayString() != "MapperPillow.MapperPillowExtensions")
         {
             return null;
@@ -73,33 +91,49 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
 
         var destType = ctx.SemanticModel.GetTypeInfo(generic.TypeArgumentList.Arguments[0], ct).Type;
         var srcType = ctx.SemanticModel.GetTypeInfo(memberAccess.Expression, ct).Type;
+
+        // Broken code: the compiler is already reporting it. Stay quiet.
         if (destType is null || srcType is null ||
-            destType is ITypeParameterSymbol || srcType is ITypeParameterSymbol ||
-            destType.TypeKind == TypeKind.Error || srcType.TypeKind == TypeKind.Error ||
-            IsFileLocal(destType) || IsFileLocal(srcType))
+            destType.TypeKind == TypeKind.Error || srcType.TypeKind == TypeKind.Error)
         {
             return null;
         }
 
-        var location = ctx.SemanticModel.GetInterceptableLocation(invocation, ct);
-        if (location is null)
+        var location = invocation.GetLocation();
+        var call = $"{method.Name}<{destType.ToDisplayString(Short)}>";
+
+        if (destType is ITypeParameterSymbol || srcType is ITypeParameterSymbol)
         {
-            return null;
+            return Candidate.Skip(call, "the source or destination is an open generic type parameter, so there is no concrete type to generate for", location);
+        }
+
+        if (IsFileLocal(destType) || IsFileLocal(srcType))
+        {
+            return Candidate.Skip(call, "'file'-local types cannot be referenced from the generated file", location);
+        }
+
+        var interceptable = ctx.SemanticModel.GetInterceptableLocation(invocation, ct);
+        if (interceptable is null)
+        {
+            return Candidate.Skip(call, "this call site has no interceptable location", location);
         }
 
         var plan = BuildBody(ctx.SemanticModel.Compilation, srcType, destType);
         if (plan is null)
         {
-            return null; // not mappable here — leave it to the runtime fallback
+            return Candidate.Skip(
+                call,
+                $"no compile-time mapping could be built from '{srcType.ToDisplayString(Short)}' to '{destType.ToDisplayString(Short)}'",
+                location);
         }
 
-        return new CallSite(
+        return Candidate.Intercepted(new CallSite(
             destType.ToDisplayString(FullyQualified),
-            destType.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
+            call,
             plan.Value.Body,
             plan.Value.UnmappedCsv,
-            location.GetInterceptsLocationAttributeSyntax(),
-            invocation.GetLocation());
+            interceptable.GetInterceptsLocationAttributeSyntax(),
+            location));
     }
 
     private static (string Body, string UnmappedCsv)? BuildBody(Compilation compilation, ITypeSymbol source, ITypeSymbol destination)
@@ -704,9 +738,23 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
 
     // --- emission ------------------------------------------------------------
 
-    private static void Emit(SourceProductionContext spc, ImmutableArray<CallSite> callSites)
+    private static void Emit(SourceProductionContext spc, ImmutableArray<Candidate> candidates)
     {
-        if (callSites.IsDefaultOrEmpty)
+        if (candidates.IsDefaultOrEmpty)
+        {
+            return;
+        }
+
+        // Every call site we could not generate silently degrades to reflection —
+        // say so at compile time instead of letting it surface in production.
+        foreach (var skipped in candidates.Select(c => c.Skipped).Where(s => s is not null))
+        {
+            spc.ReportDiagnostic(Diagnostic.Create(
+                NotIntercepted, skipped!.Location, skipped.Call, skipped.Reason));
+        }
+
+        var callSites = candidates.Select(c => c.Site).Where(s => s is not null).Select(s => s!).ToArray();
+        if (callSites.Length == 0)
         {
             return;
         }
@@ -716,7 +764,7 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
             if (callSite.UnmappedCsv.Length > 0)
             {
                 spc.ReportDiagnostic(Diagnostic.Create(
-                    UnmappedMember, callSite.Location, callSite.DestShort, callSite.UnmappedCsv));
+                    UnmappedMember, callSite.Location, callSite.Call, callSite.UnmappedCsv));
             }
         }
 
@@ -765,5 +813,20 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
     }
 
     private sealed record CallSite(
-        string ReturnType, string DestShort, string Body, string UnmappedCsv, string AttributeText, Location Location);
+        string ReturnType, string Call, string Body, string UnmappedCsv, string AttributeText, Location Location);
+
+    /// <summary>A call site that could not be generated, and why.</summary>
+    private sealed record SkippedCallSite(string Call, string Reason, Location Location);
+
+    /// <summary>
+    /// One MapperPillow call site: either generated (<see cref="Site"/>) or left to
+    /// the reflection fallback (<see cref="Skipped"/>). Exactly one is non-null.
+    /// </summary>
+    private sealed record Candidate(CallSite? Site, SkippedCallSite? Skipped)
+    {
+        public static Candidate Intercepted(CallSite site) => new(site, null);
+
+        public static Candidate Skip(string call, string reason, Location location) =>
+            new(null, new SkippedCallSite(call, reason, location));
+    }
 }

@@ -6,3 +6,4 @@
 Rule ID | Category     | Severity | Notes
 --------|--------------|----------|---------------------------
 MP0001  | MapperPillow | Warning  | Unmapped destination member
+MP0002  | MapperPillow | Warning  | Mapping falls back to runtime reflection

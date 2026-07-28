@@ -131,4 +131,84 @@ public class GeneratorTests
 
         Assert.Empty(result.GeneratedSources);
     }
+
+    [Fact]
+    public void Intercepts_the_Map_alias_like_MapTo()
+    {
+        var result = GeneratorHarness.Run(
+            """
+            using MapperPillow;
+            namespace Demo;
+            public class Src { public int Id { get; set; } }
+            public class Dst { public int Id { get; set; } }
+            public static class Run { public static Dst Do(Src s) => s.Map<Dst>(); }
+            """);
+
+        var generated = result.GeneratedSources.Single().SourceText.ToString();
+        Assert.Contains("InterceptsLocation", generated);
+        Assert.Contains("Id = typed.Id", generated);
+    }
+
+    [Fact]
+    public void Ignores_Map_methods_that_are_not_MapperPillows()
+    {
+        // A user's own extension method named Map<T> must not be touched at all.
+        var result = GeneratorHarness.Run(
+            """
+            namespace Demo;
+            public class Src { public int Id { get; set; } }
+            public class Dst { public int Id { get; set; } }
+            public static class Mine { public static T Map<T>(this object s) => default!; }
+            public static class Run { public static Dst Do(Src s) => s.Map<Dst>(); }
+            """);
+
+        Assert.Empty(result.GeneratedSources);
+        Assert.DoesNotContain(result.Diagnostics, d => d.Id == "MP0002");
+    }
+
+    [Fact]
+    public void Warns_MP0002_when_a_call_site_falls_back_to_reflection()
+    {
+        // No compile-time mapping is possible: Dst has no parameterless constructor
+        // and no constructor that the source can satisfy.
+        var result = GeneratorHarness.Run(
+            """
+            using MapperPillow;
+            namespace Demo;
+            public class Src { public int Id { get; set; } }
+            public class Dst { public Dst(string unmatched) { } public int Id { get; set; } }
+            public static class Run { public static Dst Do(Src s) => s.MapTo<Dst>(); }
+            """);
+
+        var diagnostic = result.Diagnostics.Single(d => d.Id == "MP0002");
+        Assert.Contains("MapTo<Dst>", diagnostic.GetMessage());
+    }
+
+    [Fact]
+    public void Warns_MP0002_for_open_generic_call_sites()
+    {
+        var result = GeneratorHarness.Run(
+            """
+            using MapperPillow;
+            namespace Demo;
+            public static class Run { public static T To<T>(object s) => s.MapTo<T>(); }
+            """);
+
+        Assert.Contains(result.Diagnostics, d => d.Id == "MP0002");
+    }
+
+    [Fact]
+    public void No_MP0002_when_the_call_site_is_intercepted()
+    {
+        var result = GeneratorHarness.Run(
+            """
+            using MapperPillow;
+            namespace Demo;
+            public class Src { public int Id { get; set; } }
+            public class Dst { public int Id { get; set; } }
+            public static class Run { public static Dst Do(Src s) => s.MapTo<Dst>(); }
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, d => d.Id == "MP0002");
+    }
 }
