@@ -31,8 +31,10 @@ public sealed class ProjectToTranslationTests : IDisposable
         _db.Database.EnsureCreated();
 
         _db.Customers.Add(new Customer { Id = 1, Name = "Ada", City = "London" });
-        _db.Orders.Add(new Order { Id = 10, Reference = "a-1", CustomerId = 1, Status = OrderStatus.Shipped });
+        _db.Orders.Add(new Order { Id = 10, Reference = "a-1", CustomerId = 1, Status = OrderStatus.Shipped, Discount = 15 });
         _db.Orders.Add(new Order { Id = 11, Reference = "A-2", CustomerId = 1 });
+        _db.OrderItems.Add(new OrderItem { Id = 100, Sku = "SKU-1", OrderId = 10 });
+        _db.OrderItems.Add(new OrderItem { Id = 101, Sku = "SKU-2", OrderId = 10 });
         _db.SaveChanges();
         _db.ChangeTracker.Clear();
     }
@@ -117,6 +119,46 @@ public sealed class ProjectToTranslationTests : IDisposable
         Assert.ThrowsAny<InvalidOperationException>(() => query.ToList());
     }
 
+    [Fact]
+    public void A_nested_object_is_projected_by_the_database()
+    {
+        // Regression guard for CS8122 as much as a translation test. The nested
+        // branch used to emit `src.Customer is null ? ...`, and an expression tree
+        // cannot contain a pattern — ProjectTo simply did not compile for this shape.
+        var dtos = _db.Orders.ProjectTo<OrderNestedDto>().OrderBy(d => d.Id).ToList();
+
+        Assert.Equal(2, dtos.Count);
+        Assert.Equal("London", dtos[0].Customer.City);
+        Assert.Equal("Ada", dtos[0].Customer.Name);
+        Assert.Contains("JOIN", _db.Orders.ProjectTo<OrderNestedDto>().ToQueryString(),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void A_collection_valued_property_is_projected_by_the_database()
+    {
+        var dtos = _db.Orders.ProjectTo<OrderWithItemsDto>().OrderBy(d => d.Id).ToList();
+
+        Assert.Equal(2, dtos.Count);
+        Assert.Equal(2, dtos[0].Items.Count);
+        Assert.Contains("SKU-1", dtos[0].Items.Select(i => i.Sku));
+        Assert.Empty(dtos[1].Items);
+    }
+
+    [Fact]
+    public void A_nullable_unwrap_is_translated_and_stays_filterable()
+    {
+        // Decides whether GetValueOrDefault() belongs in MP0003. The projection
+        // running is not enough proof — a converter runs too, on the client. The
+        // proof is that the provider can still FILTER on the member, which it cannot
+        // do for anything it evaluated client-side.
+        var dtos = _db.Orders.ProjectTo<OrderDiscountDto>().OrderBy(d => d.Id).ToList();
+        Assert.Equal(15, dtos[0].Discount);
+        Assert.Equal(0, dtos[1].Discount);   // NULL became default, not a crash
+
+        Assert.Single(_db.Orders.ProjectTo<OrderDiscountDto>().Where(d => d.Discount > 10).ToList());
+    }
+
     public void Dispose()
     {
         _db.Dispose();
@@ -129,6 +171,7 @@ public sealed class ProjectToTranslationTests : IDisposable
     {
         public DbSet<Order> Orders => Set<Order>();
         public DbSet<Customer> Customers => Set<Customer>();
+        public DbSet<OrderItem> OrderItems => Set<OrderItem>();
     }
 
     public sealed class Customer
@@ -145,8 +188,51 @@ public sealed class ProjectToTranslationTests : IDisposable
         public int Id { get; set; }
         public string Reference { get; set; } = "";
         public OrderStatus Status { get; set; }
+        public int? Discount { get; set; }
         public int CustomerId { get; set; }
         public Customer Customer { get; set; } = null!;
+        public List<OrderItem> Items { get; set; } = new();
+    }
+
+    public sealed class OrderItem
+    {
+        public int Id { get; set; }
+        public string Sku { get; set; } = "";
+        public int OrderId { get; set; }
+    }
+
+    // --- shapes for the remaining translation questions ---
+
+    public sealed class CustomerDto
+    {
+        public string Name { get; set; } = "";
+        public string City { get; set; } = "";
+    }
+
+    public sealed class OrderItemDto
+    {
+        public string Sku { get; set; } = "";
+    }
+
+    /// <summary>A nested object inside a projection.</summary>
+    public sealed class OrderNestedDto
+    {
+        public int Id { get; set; }
+        public CustomerDto Customer { get; set; } = new();
+    }
+
+    /// <summary>A collection-valued property inside a projection.</summary>
+    public sealed class OrderWithItemsDto
+    {
+        public int Id { get; set; }
+        public List<OrderItemDto> Items { get; set; } = new();
+    }
+
+    /// <summary>A nullable source unwrapped with GetValueOrDefault().</summary>
+    public sealed class OrderDiscountDto
+    {
+        public int Id { get; set; }
+        public int Discount { get; set; }
     }
 
     public sealed class OrderStatusDto

@@ -256,6 +256,51 @@ public class GeneratorTests
     }
 
     [Fact]
+    public void ProjectTo_null_guards_a_nested_object_without_a_pattern()
+    {
+        // An expression tree may not contain a pattern (CS8122), so the projection
+        // has to null-guard with `== null` rather than the `is null` MapTo uses.
+        // Getting this wrong does not degrade the mapping — it fails to compile.
+        var result = GeneratorHarness.Run(
+            """
+            using MapperPillow;
+            using System.Linq;
+            namespace Demo;
+            public class Customer { public string City { get; set; } = ""; }
+            public class CustomerDto { public string City { get; set; } = ""; }
+            public class Order { public Customer Customer { get; set; } = new(); }
+            public class OrderDto { public CustomerDto Customer { get; set; } = new(); }
+            public static class Run { public static IQueryable<OrderDto> Do(IQueryable<Order> q) => q.ProjectTo<OrderDto>(); }
+            """);
+
+        var generated = result.GeneratedSources.Single().SourceText.ToString();
+        Assert.Contains("src.Customer == null ? null :", generated);
+        // Only the lambda has to avoid the pattern. The interceptor's own argument
+        // guard is a statement outside the tree, so `if (source is null)` stays.
+        Assert.DoesNotContain("src.Customer is null", generated);
+    }
+
+    [Fact]
+    public void MapTo_keeps_the_is_null_guard()
+    {
+        // Outside an expression tree `is null` is the better test: an overloaded
+        // operator== cannot change what it means.
+        var result = GeneratorHarness.Run(
+            """
+            using MapperPillow;
+            namespace Demo;
+            public class Customer { public string City { get; set; } = ""; }
+            public class CustomerDto { public string City { get; set; } = ""; }
+            public class Order { public Customer Customer { get; set; } = new(); }
+            public class OrderDto { public CustomerDto Customer { get; set; } = new(); }
+            public static class Run { public static OrderDto Do(Order o) => o.MapTo<OrderDto>(); }
+            """);
+
+        var generated = result.GeneratedSources.Single().SourceText.ToString();
+        Assert.Contains("typed.Customer is null ? null :", generated);
+    }
+
+    [Fact]
     public void Warns_MP0003_when_a_projection_uses_a_value_converter()
     {
         var result = GeneratorHarness.Run(

@@ -13,7 +13,7 @@ characteristics"). Trimming and Native AOT are supported: trimmed/AOT builds dro
 fallback entirely. The NuGet package is built and verified (it carries the generator as
 an analyzer), but not yet published to nuget.org.
 
-Tests: 33 behavioral × 3 target frameworks + 20 generator + 6 EF Core translation,
+Tests: 33 behavioral × 3 target frameworks + 22 generator + 9 EF Core translation,
 green. Build clean, 0 warnings, including under the trim/AOT analyzers
 (`IsAotCompatible`).
 
@@ -71,10 +71,15 @@ valid expression tree but no provider can translate.
       tests in `MapperPillow.EfCore.Tests`
 - [x] Decided: flagged members are still **emitted**. Dropping them would hand back a
       DTO with a silently missing value, which is worse than a warning
-- [ ] EF Core coverage for nested objects and collection-valued properties inside a
-      projection (both work for `MapTo`; untested through a provider)
-- [ ] Check `Nullable<T>.GetValueOrDefault()` against a provider — believed
-      translatable, but unmeasured, so deliberately not flagged
+- [x] EF Core coverage for nested objects, collection-valued properties and nullable
+      unwrap inside a projection. Measuring found a real defect: the nested branch
+      emitted `src.Customer is null ? ...`, and an expression tree may not contain a
+      pattern (CS8122) — `ProjectTo` did not compile at all for that shape. Projections
+      now null-guard with `== null`; `MapTo` keeps `is null`, which an overloaded
+      `operator==` cannot subvert
+- [x] `Nullable<T>.GetValueOrDefault()` measured and correctly **not** flagged: it
+      translates, and the query can still filter on the projected member — the test
+      that matters, since a client-evaluated member cannot be filtered on
 
 ### 2. Packaging & release (infrastructure, not features)
 

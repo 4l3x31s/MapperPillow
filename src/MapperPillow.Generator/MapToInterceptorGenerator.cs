@@ -679,7 +679,13 @@ public sealed class MapToInterceptorGenerator : IIncrementalGenerator
                 return null;
             }
 
-            return $"{accessor} is null ? null : {built.Value.Expr}";
+            // `is null` is the safer null test — it cannot be changed by an overloaded
+            // operator== — but an expression tree may not contain a pattern (CS8122),
+            // so a projection has to use `== null`. Only nested objects were affected;
+            // every other null guard already emits `== null`.
+            return ctx.ForProjection
+                ? $"{accessor} == null ? null : {built.Value.Expr}"
+                : $"{accessor} is null ? null : {built.Value.Expr}";
         }
 
         return null;
