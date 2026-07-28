@@ -31,4 +31,32 @@
     <None Include="build\MapperPillow.targets" Pack="true" PackagePath="build\" />
   </ItemGroup>
 
+  <!-- Ship the generator inside this package under analyzers\dotnet\cs, so a NuGet
+       consumer gets compile-time interception. Without this the package is runtime
+       reflection only — which trimmed and Native AOT builds refuse to run.
+       The ProjectReference above uses ReferenceOutputAssembly="false", so the
+       generator's path is not in @(ReferencePath); ask the project for it directly. -->
+  <PropertyGroup>
+    <TargetsForTfmSpecificContentInPackage>
+      $(TargetsForTfmSpecificContentInPackage);_PackMapperPillowGenerator
+    </TargetsForTfmSpecificContentInPackage>
+  </PropertyGroup>
+
+  <Target Name="_PackMapperPillowGenerator">
+    <MSBuild Projects="..\MapperPillow.Generator\MapperPillow.Generator.csproj"
+             Targets="Build;GetTargetPath"
+             Properties="Configuration=$(Configuration)"
+             RemoveProperties="PublishTrimmed;PublishAot;RuntimeIdentifier;SelfContained;TargetFramework">
+      <Output TaskParameter="TargetOutputs" ItemName="_MapperPillowGeneratorAssembly" />
+    </MSBuild>
+
+    <Error Condition="'@(_MapperPillowGeneratorAssembly)' == ''"
+           Text="Could not resolve the MapperPillow generator assembly; the package would ship without compile-time interception." />
+
+    <ItemGroup>
+      <TfmSpecificPackageFile Include="@(_MapperPillowGeneratorAssembly)"
+                              PackagePath="analyzers\dotnet\cs" />
+    </ItemGroup>
+  </Target>
+
 </Project>
