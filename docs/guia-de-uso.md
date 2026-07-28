@@ -114,7 +114,9 @@ Esto descarga el generador y te deja con el fallback por reflexión. No es un mo
 soportado: ese fallback **no** es equivalente al código generado (ver §"Limitaciones")
 y una publicación recortada o Native AOT lanzará excepción.
 
-Requisito: un SDK de .NET con **C# 12 o superior**. Esta versión apunta a `net10.0`.
+Requisitos: **`net8.0`, `net9.0` o `net10.0`**, y un SDK de .NET con **C# 12 o
+superior**. Los tres objetivos están verificados de punta a punta, incluidas
+publicaciones recortadas y Native AOT.
 
 ---
 

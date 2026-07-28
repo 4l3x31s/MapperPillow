@@ -40,8 +40,9 @@ at runtime.
 
 ## Requirements
 
-- A .NET SDK with **C# 12 or later** (C# interceptors). This early build targets
-  `net10.0`.
+- **`net8.0`, `net9.0` or `net10.0`.** All three are verified end-to-end, including
+  trimmed and Native AOT publishes.
+- A .NET SDK with **C# 12 or later** (C# interceptors).
 
 ---
 
@@ -276,9 +277,9 @@ dotnet run   --project samples/MapperPillow.Sample
 Project layout:
 
 ```
-src/MapperPillow             Runtime surface (MapTo / Map)       — net10.0
+src/MapperPillow             Runtime surface (MapTo / Map)       — net8.0/9.0/10.0
 src/MapperPillow.Generator   Roslyn source generator             — netstandard2.0
-tests/MapperPillow.Tests             Behavioral tests            — net10.0
+tests/MapperPillow.Tests             Behavioral tests            — net8.0/9.0/10.0
 tests/MapperPillow.Generator.Tests   In-memory generator tests   — net10.0
 samples/MapperPillow.Sample  Runnable example                    — net10.0
 ```

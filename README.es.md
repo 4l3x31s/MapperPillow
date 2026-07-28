@@ -42,8 +42,9 @@ mapear en tiempo de compilación**, no en tiempo de ejecución.
 
 ## Requisitos
 
-- Un SDK de .NET con **C# 12 o superior** (interceptores de C#). Esta versión
-  temprana apunta a `net10.0`.
+- **`net8.0`, `net9.0` o `net10.0`.** Los tres están verificados de punta a punta,
+  incluidas publicaciones recortadas y Native AOT.
+- Un SDK de .NET con **C# 12 o superior** (interceptores de C#).
 
 ---
 

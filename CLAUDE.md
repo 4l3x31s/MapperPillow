@@ -37,8 +37,16 @@ dotnet test  MapperPillow.slnx
 dotnet run   --project samples/MapperPillow.Sample
 ```
 
-Requires the .NET 10 SDK (only `net10.0` is targeted so far). Run a single test with
+Requires the .NET 10 SDK. The library and the behavioral tests multi-target
+`net8.0;net9.0;net10.0`, so `dotnet test` runs the suite three times — a failure
+report names the TFM. Run a single test with
 `dotnet test tests/MapperPillow.Tests --filter "FullyQualifiedName~<name>"`.
+
+`net8.0` has no `FeatureSwitchDefinitionAttribute`; `src/MapperPillow/Polyfills.cs`
+declares an internal one under `#if !NET9_0_OR_GREATER`. The trimmer matches it by
+full type name, so do not rename or move it out of
+`System.Diagnostics.CodeAnalysis` — the reflection branch would stop being trimmed
+away on `net8.0`, silently.
 
 ## The core
 

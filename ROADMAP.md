@@ -63,7 +63,11 @@ remaining piece; effectively its own milestone.
       interceptor file uncompilable (CS9137). The sample and the test suite now rely on
       these shipped targets rather than setting the property by hand, so a regression
       there fails the build.
-- [ ] Multi-target the runtime (`net8.0;net9.0;net10.0`) instead of `net10.0` only
+- [x] Multi-target the runtime (`net8.0;net9.0;net10.0`). `net8.0` has no
+      `FeatureSwitchDefinitionAttribute`, so it gets an internal polyfill; verified
+      that the trimmer honours it and still removes the reflection branch (the trimmed
+      `MapperPillow.dll` drops from 11.7 KB to 5.1 KB and no longer contains the
+      fallback's strings). The behavioral suite runs on all three targets.
 - [ ] Versioning (e.g. MinVer), a git remote, and CI (build + test)
 - [ ] Publish to NuGet
 
