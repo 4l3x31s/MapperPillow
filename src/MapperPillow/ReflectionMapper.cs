@@ -1,14 +1,18 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 
 namespace MapperPillow;
 
 /// <summary>
-/// v0 baseline mapper. Copies public instance properties that match by name and
-/// have an assignable type. This is intentionally simple: the endgame is for the
-/// source generator to emit equivalent, allocation-lean code at each call site.
+/// The runtime fallback mapper. Copies public instance properties that match by
+/// name and have an assignable type — and nothing else. It deliberately does NOT
+/// match the generated code: no flattening, no <c>[MapFrom]</c>, no
+/// <c>[MapConvert]</c>, no constructor-based destinations. Reaching it means a call
+/// site was not intercepted, which the generator reports as MP0002.
 /// </summary>
 internal static class ReflectionMapper
 {
+    [RequiresUnreferencedCode(ReflectionFallback.TrimMessage)]
     public static object Map(object source, Type destinationType)
     {
         if (destinationType.IsArray)

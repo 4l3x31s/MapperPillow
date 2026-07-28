@@ -138,7 +138,15 @@ Chosen engine: **Roslyn incremental source generator + C# interceptors.**
   compile-time): `[MapIgnore]` (skip a member; also excluded from `MP0001`),
   `[MapFrom("path")]` (map from an explicit, possibly nested, source path), and
   `[MapConvert(typeof(C))]` with `C : IValueConverter<TSource, TDestination>`.
-- **Milestone 6 — `ProjectTo` for `IQueryable`** (EF Core translation). A separate
+- **Milestone 6 — trimming / Native AOT readiness.** Closed the gap between "the
+  generator emits no reflection" and "the *library* is AOT-safe". Three parts:
+  (a) the `Map<T>` alias is now intercepted like `MapTo<T>`, so migrated AutoMapper
+  code stops running entirely on reflection; (b) `MP0002` turns every call site the
+  generator declines into a build warning, because the fallback is a safety net and
+  not a feature-equivalent second implementation; (c) the fallback sits behind the
+  `MapperPillow.EnableReflectionFallback` feature switch, which `PublishTrimmed` and
+  `PublishAot` builds default to `false` so the trimmer removes the branch outright.
+- **Milestone 7 — `ProjectTo` for `IQueryable`** (EF Core translation). A separate
   expression-tree pipeline, not interceptors.
 
 ## Testing strategy
@@ -157,8 +165,26 @@ Two tiers:
 
 ## 7. Current status
 
-Direct `MapTo<TDestination>()` calls on concrete types are served by generated
-compile-time interceptors (no reflection). `ReflectionMapper` now survives only as
-a fallback for call sites the generator does not cover — notably the `Map<T>`
-courtesy alias (open generic) and any dynamically-typed source. Retiring those
-remaining reflection paths is future work (see milestones 3+).
+`MapTo<TDestination>()` and its `Map<TDestination>()` alias are served by generated
+compile-time interceptors (no reflection) for every concrete-typed call site.
+
+`ReflectionMapper` survives only for what genuinely cannot be generated: open generic
+call sites, `file`-local types, and dynamically-typed sources. Those are no longer
+silent — the generator reports each one as `MP0002` — and they are no longer a hidden
+AOT hazard: the reflection branch is gated on the
+`MapperPillow.EnableReflectionFallback` feature switch and is removed from trimmed and
+Native AOT builds.
+
+Two consequences worth stating plainly, because they contradict how a "fallback" is
+usually read:
+
+1. **The fallback is not equivalent to the generated code.** It copies public
+   properties by name with an assignable type and nothing else — no flattening, no
+   `[MapFrom]`, no `[MapConvert]`, no conversions, no constructor destinations. A call
+   site that degrades to it can produce a *different result*, not just a slower one.
+   That is why `MP0002` exists.
+2. **`[RequiresUnreferencedCode]` must not go on the public `MapTo`/`Map` methods.**
+   Verified empirically: the trim analyzer reads the original call site, not the
+   interceptor that replaces it, so annotating them raises IL2026 on every call site
+   including fully generated ones. The feature switch is what makes the fallback
+   trim-safe; the suppression lives on the internal `Fallback<T>` helper.

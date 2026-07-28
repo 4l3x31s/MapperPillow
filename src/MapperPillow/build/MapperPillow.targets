@@ -1,0 +1,28 @@
+<Project>
+
+  <!--
+    MapperPillow's runtime reflection fallback is not trimming/Native AOT safe: the
+    trimmer cannot see through reflection over an `object`, so it may remove the very
+    members the fallback needs and the mapping silently returns a half-populated
+    object.
+
+    Trimmed and Native AOT builds therefore turn the fallback OFF by default. A call
+    site the generator could not handle then throws immediately instead of failing
+    silently — and it was already reported at build time as an MP0002 warning.
+
+    Set <MapperPillowEnableReflectionFallback>true</MapperPillowEnableReflectionFallback>
+    to keep the fallback in a trimmed build (you then own preserving the mapped types),
+    or `false` to remove it from an untrimmed one.
+  -->
+  <PropertyGroup Condition="'$(MapperPillowEnableReflectionFallback)' == '' And
+                            ('$(PublishTrimmed)' == 'true' Or '$(PublishAot)' == 'true')">
+    <MapperPillowEnableReflectionFallback>false</MapperPillowEnableReflectionFallback>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(MapperPillowEnableReflectionFallback)' != ''">
+    <RuntimeHostConfigurationOption Include="MapperPillow.EnableReflectionFallback"
+                                    Value="$(MapperPillowEnableReflectionFallback)"
+                                    Trim="true" />
+  </ItemGroup>
+
+</Project>

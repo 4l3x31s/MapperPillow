@@ -7,6 +7,10 @@
     <LangVersion>latest</LangVersion>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
 
+    <!-- Turns on the trim/AOT analyzers so any reflection creeping back in is a
+         build warning here, not a silent failure in a consumer's published app. -->
+    <IsAotCompatible>true</IsAotCompatible>
+
     <PackageId>MapperPillow</PackageId>
     <Description>A comfortable, convention-first object mapper for .NET. Compile-time, zero-ceremony.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
@@ -16,7 +20,15 @@
   <ItemGroup>
     <ProjectReference Include="..\MapperPillow.Generator\MapperPillow.Generator.csproj"
                       OutputItemType="Analyzer"
-                      ReferenceOutputAssembly="false" />
+                      ReferenceOutputAssembly="false"
+                      UndefineProperties="PublishTrimmed;PublishAot;RuntimeIdentifier;SelfContained" />
+  </ItemGroup>
+
+  <!-- Gives consumers <MapperPillowEnableReflectionFallback>. This must ship as a
+       .targets, not a .props: NuGet imports build\*.props before the consuming
+       project's body, so PublishTrimmed/PublishAot would not be set yet. -->
+  <ItemGroup>
+    <None Include="build\MapperPillow.targets" Pack="true" PackagePath="build\" />
   </ItemGroup>
 
 </Project>

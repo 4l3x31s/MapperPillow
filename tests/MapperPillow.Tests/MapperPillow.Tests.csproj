@@ -6,6 +6,9 @@
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <IsPackable>false</IsPackable>
+    <!-- Runs the trim/AOT analyzers over the GENERATED interceptors, which live in
+         this project rather than in the library. -->
+    <IsAotCompatible>true</IsAotCompatible>
     <!-- Opt in to interceptors emitted by the MapperPillow generator. -->
     <InterceptorsNamespaces>$(InterceptorsNamespaces);MapperPillow.Generated</InterceptorsNamespaces>
   </PropertyGroup>
@@ -21,7 +24,8 @@
     <!-- Wire the generator so interceptors are emitted for this project's call sites. -->
     <ProjectReference Include="..\..\src\MapperPillow.Generator\MapperPillow.Generator.csproj"
                       OutputItemType="Analyzer"
-                      ReferenceOutputAssembly="false" />
+                      ReferenceOutputAssembly="false"
+                      UndefineProperties="PublishTrimmed;PublishAot;RuntimeIdentifier;SelfContained" />
   </ItemGroup>
 
 </Project>

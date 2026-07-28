@@ -6,6 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
+    <IsAotCompatible>true</IsAotCompatible>
     <InterceptorsNamespaces>$(InterceptorsNamespaces);MapperPillow.Generated</InterceptorsNamespaces>
   </PropertyGroup>
 
@@ -14,7 +15,12 @@
     <!-- Wire the generator directly so it runs on this project's call sites. -->
     <ProjectReference Include="..\..\src\MapperPillow.Generator\MapperPillow.Generator.csproj"
                       OutputItemType="Analyzer"
-                      ReferenceOutputAssembly="false" />
+                      ReferenceOutputAssembly="false"
+                      UndefineProperties="PublishTrimmed;PublishAot;RuntimeIdentifier;SelfContained" />
   </ItemGroup>
+
+  <!-- A NuGet consumer gets this automatically from the package's build\ folder;
+       the sample references the project directly, so it imports it by hand. -->
+  <Import Project="..\..\src\MapperPillow\build\MapperPillow.targets" />
 
 </Project>
