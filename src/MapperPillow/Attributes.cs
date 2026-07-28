@@ -17,6 +17,9 @@ public sealed class MapIgnoreAttribute : Attribute
 [AttributeUsage(AttributeTargets.Property, AllowMultiple = false, Inherited = false)]
 public sealed class MapFromAttribute : Attribute
 {
+    /// <param name="sourcePath">
+    /// The dot-separated source member path to read from, e.g. <c>Customer.Name</c>.
+    /// </param>
     public MapFromAttribute(string sourcePath) => SourcePath = sourcePath;
 
     /// <summary>The dot-separated source member path (e.g. <c>Customer.Name</c>).</summary>
@@ -28,8 +31,13 @@ public sealed class MapFromAttribute : Attribute
 /// parameterless constructor and point a destination property at it with
 /// <see cref="MapConvertAttribute"/>.
 /// </summary>
+/// <typeparam name="TSource">The source member type.</typeparam>
+/// <typeparam name="TDestination">The destination member type.</typeparam>
 public interface IValueConverter<in TSource, out TDestination>
 {
+    /// <summary>Converts a single source value to its destination form.</summary>
+    /// <param name="source">The value read from the source member.</param>
+    /// <returns>The value to assign to the destination member.</returns>
     TDestination Convert(TSource source);
 }
 
@@ -41,6 +49,10 @@ public interface IValueConverter<in TSource, out TDestination>
 [AttributeUsage(AttributeTargets.Property, AllowMultiple = false, Inherited = false)]
 public sealed class MapConvertAttribute : Attribute
 {
+    /// <param name="converterType">
+    /// A type with a public parameterless constructor implementing
+    /// <see cref="IValueConverter{TSource,TDestination}"/>.
+    /// </param>
     public MapConvertAttribute(Type converterType) => ConverterType = converterType;
 
     /// <summary>The <see cref="IValueConverter{TSource,TDestination}"/> implementation to use.</summary>
