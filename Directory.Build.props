@@ -1,0 +1,37 @@
+<Project>
+
+  <!-- Repo-wide identity and packaging policy.
+
+       Only src/MapperPillow ships to nuget.org. Everything else opts out here by
+       default, because nuget.org has no unpublish: a sample or a test harness
+       pushed under this account can only ever be delisted, never taken back.
+       Opting in is a deliberate <IsPackable>true</IsPackable> in one project. -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+
+    <Authors>Alexeis Vladimir Carrillo Pinaya</Authors>
+    <Company>Alexeis Vladimir Carrillo Pinaya</Company>
+    <Copyright>Copyright (c) 2026 Alexeis Vladimir Carrillo Pinaya</Copyright>
+    <PackageProjectUrl>https://github.com/4l3x31s/MapperPillow</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/4l3x31s/MapperPillow</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+  </PropertyGroup>
+
+  <!-- Reproducibility and provenance.
+
+       SourceLink ships in the .NET SDK, so no PackageReference is needed: setting
+       PublishRepositoryUrl records the repository and the exact commit in the
+       .nuspec, and EmbedUntrackedSources puts generated files into the symbols so
+       a consumer can step through everything, not just the tracked source.
+
+       ContinuousIntegrationBuild normalizes absolute paths out of the build. It is
+       what makes a release reproducible, so eng/Pack.ps1 sets it for local
+       releases too — this condition only covers CI. -->
+  <PropertyGroup>
+    <Deterministic>true</Deterministic>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
+</Project>

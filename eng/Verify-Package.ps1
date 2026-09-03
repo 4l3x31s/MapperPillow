@@ -14,11 +14,12 @@
     real user would, and asserts on observable behaviour:
 
       1. the package contains the generator under analyzers/dotnet/cs
-      2. a bare PackageReference is enough — no interceptor opt-in needed
-      3. mappings are served by the generated interceptor, not by reflection
-      4. a trimmed publish emits no IL warnings
-      5. the trimmer actually removes the reflection branch from the assembly
-      6. a Native AOT binary runs and still maps correctly
+      2. the published metadata is complete and no sibling project can pack
+      3. a bare PackageReference is enough — no interceptor opt-in needed
+      4. mappings are served by the generated interceptor, not by reflection
+      5. a trimmed publish emits no IL warnings
+      6. the trimmer actually removes the reflection branch from the assembly
+      7. a Native AOT binary runs and still maps correctly
 
     Run it locally before releasing; CI runs it on every push.
 
@@ -74,7 +75,11 @@ try {
 
     Assert-Condition (-not ($packOutput -match 'warning NU')) 'pack emits no NuGet warnings'
 
+    # The extension guard is not redundant: on Windows -Filter falls back to legacy
+    # wildcard semantics that also match longer extensions, so '*.nupkg' can return
+    # the .snupkg sitting next to it.
     $nupkg = Get-ChildItem (Join-Path $repoRoot "src/MapperPillow/bin/$Configuration") -Filter '*.nupkg' |
+        Where-Object { $_.Extension -eq '.nupkg' } |
         Sort-Object LastWriteTime | Select-Object -Last 1
     if (-not $nupkg) { throw 'No .nupkg was produced.' }
 
@@ -86,8 +91,59 @@ try {
             'package ships the generator under analyzers/dotnet/cs'
         Assert-Condition ([bool]($entries -match '^build/.*\.targets$')) `
             'package ships its MSBuild targets'
+
+        # nuget.org renders the readme as the package landing page; without this
+        # entry the listing is a bare description and the first impression is gone.
+        Assert-Condition ([bool]($entries -contains 'README.md')) `
+            'package ships its readme'
+
+        # --------------------------------------------------------- metadata ----
+        # Everything below is what a consumer sees before they trust the package:
+        # who published it, where the source is, and which commit produced it.
+        $nuspecEntry = $zip.Entries | Where-Object { $_.FullName -like '*.nuspec' } | Select-Object -First 1
+        if (-not $nuspecEntry) { throw 'The package has no .nuspec.' }
+
+        $reader = [IO.StreamReader]::new($nuspecEntry.Open())
+        try { $meta = ([xml]$reader.ReadToEnd()).package.metadata } finally { $reader.Dispose() }
+
+        # An unset <Authors> silently defaults to the assembly name, which looks
+        # published-by-nobody on nuget.org. Assert it was actually chosen.
+        Assert-Condition ($meta.authors -and $meta.authors -ne $meta.id) 'nuspec declares real authors'
+        Assert-Condition ([bool]$meta.copyright)                          'nuspec declares a copyright'
+        Assert-Condition ([bool]$meta.tags)                               'nuspec declares search tags'
+        Assert-Condition ($meta.readme -eq 'README.md')                   'nuspec points at the readme'
+        Assert-Condition ($meta.license.'#text' -eq 'MIT')                'nuspec declares the MIT license'
+        Assert-Condition ($meta.projectUrl -match 'github\.com')          'nuspec declares a project url'
+
+        # Repository url + commit are what make the package auditable: they let a
+        # consumer diff the shipped binary against the exact source that built it.
+        Assert-Condition ($meta.repository.url -match 'github\.com') 'nuspec declares the repository url'
+        Assert-Condition ($meta.repository.commit -match '^[0-9a-f]{40}$') `
+            'nuspec records the exact source commit'
     }
     finally { $zip.Dispose() }
+
+    # A symbols package is the difference between a consumer stepping into
+    # MapperPillow and hitting a decompiled wall. Pack must produce one.
+    $snupkg = Get-ChildItem (Join-Path $repoRoot "src/MapperPillow/bin/$Configuration") -Filter '*.snupkg' |
+        Sort-Object LastWriteTime | Select-Object -Last 1
+    Assert-Condition ([bool]$snupkg) 'pack produces a .snupkg symbols package'
+
+    # ------------------------------------------------ no accidental packages ----
+    # `dotnet pack` on the solution must yield exactly one package. A sample or a
+    # test harness reaching nuget.org under this account cannot be taken back:
+    # nuget.org has no unpublish, only delist.
+    foreach ($sibling in @(
+        'src/MapperPillow.Generator/MapperPillow.Generator.csproj',
+        'samples/MapperPillow.Sample/MapperPillow.Sample.csproj',
+        'tests/MapperPillow.Tests/MapperPillow.Tests.csproj',
+        'tests/MapperPillow.Generator.Tests/MapperPillow.Generator.Tests.csproj',
+        'tests/MapperPillow.EfCore.Tests/MapperPillow.EfCore.Tests.csproj')) {
+
+        $isPackable = (& dotnet msbuild (Join-Path $repoRoot $sibling) `
+            -getProperty:IsPackable -nologo 2>&1 | Out-String).Trim()
+        Assert-Condition ($isPackable -eq 'false') "$(Split-Path $sibling -Leaf) opts out of packing"
+    }
 
     Copy-Item $nupkg.FullName $feed
     $packageVersion = $nupkg.BaseName -replace '^MapperPillow\.', ''

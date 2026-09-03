@@ -11,10 +11,50 @@
          build warning here, not a silent failure in a consumer's published app. -->
     <IsAotCompatible>true</IsAotCompatible>
 
-    <PackageId>MapperPillow</PackageId>
-    <Description>A comfortable, convention-first object mapper for .NET. Compile-time, zero-ceremony.</Description>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
   </PropertyGroup>
+
+  <!-- ================================ package ================================ -->
+  <PropertyGroup>
+    <!-- Directory.Build.props opts every project out of packing; this is the one
+         that ships. -->
+    <IsPackable>true</IsPackable>
+
+    <PackageId>MapperPillow</PackageId>
+    <Version>1.0.0</Version>
+
+    <!-- Pinned to the major version on purpose. NuGet resolves by <Version>, but
+         the CLR binds by assembly identity: leaving this at the SDK default would
+         make 1.0.1 a new identity, so anything that hard-binds (a strong-named
+         consumer, a plugin host, a binding redirect) breaks on a patch release.
+         Move these only when the major moves. -->
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+
+    <Title>MapperPillow</Title>
+    <Description>A comfortable, convention-first object mapper for .NET — compile-time and zero-ceremony. Properties that match by name map on their own; attributes cover the unusual cases. A Roslyn source generator plus C# interceptors emit the mapping code at build time, so there is no runtime reflection, no mapper instance to register, and no startup call. Trimming- and Native AOT-safe, and an easy migration from AutoMapper. MIT licensed.</Description>
+    <PackageTags>mapper;object-mapper;mapping;dto;automapper;source-generator;roslyn;interceptors;aot;trimming;codegen</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageReleaseNotes>First stable release. See https://github.com/4l3x31s/MapperPillow/releases for the full notes.</PackageReleaseNotes>
+
+    <!-- Ship a .snupkg to nuget.org's symbol server. Combined with SourceLink this
+         is what lets a consumer step into MapperPillow instead of hitting a
+         decompiled wall while debugging their own mapping. -->
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+
+    <!-- Fails the pack when the package's public API is not consistent across the
+         frameworks it multi-targets, and — once PackageValidationBaselineVersion
+         is set to the previous release — when a new version breaks the API a
+         published consumer already compiled against. -->
+    <EnablePackageValidation>true</EnablePackageValidation>
+  </PropertyGroup>
+
+  <!-- The readme nuget.org renders as the package landing page. Its cross-document
+       links are absolute so they resolve there as well as on GitHub. -->
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" Visible="false" />
+  </ItemGroup>
 
   <!-- The source generator ships inside this package as an analyzer. -->
   <ItemGroup>
