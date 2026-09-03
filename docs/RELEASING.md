@@ -78,11 +78,13 @@ no publish happens in that window it goes inactive. Publishing once locks the po
 to the repository and owner IDs permanently, which is what stops someone deleting
 the repo, recreating it under the same name, and publishing as you.
 
-### 2. The `NUGET_USER` secret
+### 2. The nuget.org account name
 
-Add a repository secret `NUGET_USER` holding your nuget.org **profile name** — not
-your email address. It is not a credential; it is kept in a secret only to avoid
-publishing the account name in the workflow file.
+The workflow passes `user: 4l3x31s` to `NuGet/login@v1`. That is the nuget.org
+**profile name**, never an email address — an email fails the token exchange. It is
+public on the profile page and is not a credential, so it is written in the
+workflow rather than kept in a secret. Change it there if the publishing account
+changes.
 
 ### 3. The `release` environment
 

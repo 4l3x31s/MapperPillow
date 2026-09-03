@@ -115,12 +115,16 @@ jobs:
 
       # Exchanges the OIDC token for a single-use NuGet key valid for about an
       # hour, so this runs immediately before the push and never earlier.
-      # NUGET_USER is the nuget.org profile name, not an email address.
+      #
+      # `user` is the nuget.org profile name, never an email address. It is not a
+      # credential — it is public on the profile page — so it lives here rather
+      # than in a secret. The credential is the OIDC token, minted above and gone
+      # within the hour.
       - name: NuGet login
         id: login
         uses: NuGet/login@v1
         with:
-          user: ${{ secrets.NUGET_USER }}
+          user: 4l3x31s
 
       # The .snupkg is picked up automatically alongside the .nupkg of the same name.
       - name: Push
