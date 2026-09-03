@@ -2,7 +2,7 @@
 
 **A comfortable, convention-first object mapper for .NET — compile-time and zero-ceremony.**
 
-📖 Languages: **English** · [Español](README.es.md) — Full guide: [docs/guia-de-uso.md](docs/guia-de-uso.md)
+📖 Languages: **English** · [Español](https://github.com/4l3x31s/MapperPillow/blob/master/README.es.md) — Full guide: [docs/guia-de-uso.md](https://github.com/4l3x31s/MapperPillow/blob/master/docs/guia-de-uso.md)
 
 MapperPillow maps one object to another without the boilerplate. Properties that
 match by name map on their own; you only touch configuration for the unusual cases.
@@ -57,11 +57,12 @@ dotnet add package MapperPillow
 The package carries the source generator with it (`analyzers/dotnet/cs`), so one
 reference is all you need — no separate analyzer wiring.
 
-> **Status:** MapperPillow is early (v0) and not on nuget.org yet. The package builds
-> today (`dotnet pack src/MapperPillow -c Release`) and is verified end-to-end,
-> including trimmed and Native AOT publishes. Until it is published, either consume
-> that `.nupkg` from a local feed or reference the projects directly (see
-> [Building from source](#building-from-source)).
+> **Status:** 1.0.0 is the first stable release. It targets `net8.0`, `net9.0` and
+> `net10.0`, and every release is verified against the real `.nupkg` end-to-end —
+> including trimmed and Native AOT publishes. See
+> [docs/RELEASING.md](https://github.com/4l3x31s/MapperPillow/blob/master/docs/RELEASING.md)
+> for how a release is cut — every version is published from CI through NuGet
+> Trusted Publishing, so no long-lived credential can ship a package under this name.
 
 ### 2. Enable interceptors — nothing to do
 
@@ -289,7 +290,7 @@ Every `source.MapTo<TDestination>()` call is discovered by a Roslyn incremental
 generator, which plans the mapping (direct, nested, or flattened) and emits a
 compile-time **interceptor** that replaces the call with typed assignment code. There
 is no runtime reflection for covered call sites. See
-[DESIGN.md](DESIGN.md) for the full architecture and roadmap.
+[DESIGN.md](https://github.com/4l3x31s/MapperPillow/blob/master/DESIGN.md) for the full architecture and roadmap.
 
 ## Current limitations
 
@@ -304,7 +305,7 @@ destinations. Every call site that lands on it is reported as `MP0002`; treat th
 warnings as work to do, not as a supported mode.
 
 For the full picture of what's done and what's left (including NuGet packaging), see
-[ROADMAP.md](ROADMAP.md).
+[ROADMAP.md](https://github.com/4l3x31s/MapperPillow/blob/master/ROADMAP.md).
 
 ---
 
@@ -346,5 +347,5 @@ CI runs it on every push (`.github/workflows/ci.yml`).
 
 ## License
 
-MIT — see [LICENSE](LICENSE). MapperPillow is an independent, clean-room project and
+MIT — see [LICENSE](https://github.com/4l3x31s/MapperPillow/blob/master/LICENSE). MapperPillow is an independent, clean-room project and
 is not affiliated with or derived from AutoMapper.

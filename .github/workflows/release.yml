@@ -1,0 +1,130 @@
+# Publishes MapperPillow to nuget.org.
+#
+# Triggered by a `v*` tag, and gated twice before anything leaves the runner:
+#
+#   1. the `verify` job proves the tag, the tests and the real .nupkg all agree
+#   2. the `publish` job waits on the `release` environment, which requires a
+#      human to approve the run in the GitHub UI
+#
+# Authentication is Trusted Publishing: no API key is stored anywhere. The publish
+# job exchanges a GitHub OIDC token for a NuGet key that lives about an hour and
+# can be used once. That is also why only `publish` requests `id-token: write` —
+# the long verification job never holds a credential.
+#
+# The nuget.org policy that trusts this file is registered against its FILE NAME.
+# Renaming this workflow breaks publishing until the policy is updated to match.
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+permissions: {}
+
+jobs:
+  verify:
+    name: Verify and pack
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
+
+      # A tag that disagrees with <Version> would publish a package nobody can
+      # trace back to a commit. Fail here, before the approval prompt, so the
+      # reviewer is never asked to approve a mislabelled release.
+      - name: Check the tag matches the package version
+        id: version
+        run: |
+          version="$(dotnet msbuild src/MapperPillow/MapperPillow.csproj -getProperty:Version -nologo | tr -d '[:space:]')"
+          tagged="${GITHUB_REF_NAME#v}"
+          echo "Tag $GITHUB_REF_NAME -> $tagged ; csproj <Version> -> $version"
+          if [ "$version" != "$tagged" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match <Version> $version in src/MapperPillow/MapperPillow.csproj."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Test
+        run: dotnet test MapperPillow.slnx -c Release
+
+      # Native AOT links with the platform toolchain; on Linux that is clang + zlib.
+      - name: Install the Native AOT prerequisites
+        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
+
+      # The checks dotnet test structurally cannot make: that the package ships its
+      # generator, that a bare PackageReference intercepts, and that a trimmed and
+      # Native AOT consumer still maps correctly.
+      - name: Verify the package end to end
+        shell: pwsh
+        run: ./eng/Verify-Package.ps1
+
+      - name: Pack
+        run: |
+          dotnet pack src/MapperPillow/MapperPillow.csproj \
+            -c Release -o artifacts -p:ContinuousIntegrationBuild=true
+
+      # The publish job pushes exactly these bytes. It never re-packs, so the
+      # artifacts a human approves are the artifacts that reach nuget.org.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nuget-packages
+          path: artifacts/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish to nuget.org
+    needs: verify
+    runs-on: ubuntu-latest
+
+    # Configure this environment in the repository settings with a required
+    # reviewer. That approval is the release button: the tag starts the run, a
+    # human decides whether it ships.
+    environment:
+      name: release
+      url: https://www.nuget.org/packages/MapperPillow/${{ needs.verify.outputs.version }}
+
+    permissions:
+      id-token: write   # mint the OIDC token Trusted Publishing exchanges
+      contents: read
+
+    steps:
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: nuget-packages
+          path: artifacts
+
+      # Exchanges the OIDC token for a single-use NuGet key valid for about an
+      # hour, so this runs immediately before the push and never earlier.
+      # NUGET_USER is the nuget.org profile name, not an email address.
+      - name: NuGet login
+        id: login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
+      # The .snupkg is picked up automatically alongside the .nupkg of the same name.
+      - name: Push
+        run: |
+          dotnet nuget push artifacts/*.nupkg \
+            --source https://api.nuget.org/v3/index.json \
+            --api-key "${{ steps.login.outputs.NUGET_API_KEY }}"

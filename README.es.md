@@ -59,12 +59,10 @@ dotnet add package MapperPillow
 El paquete incluye el generador (`analyzers/dotnet/cs`), así que con una sola
 referencia alcanza: no hay que cablear el analizador aparte.
 
-> **Estado:** MapperPillow es temprano (v0) y todavía no está en nuget.org. El paquete
-> ya se construye (`dotnet pack src/MapperPillow -c Release`) y está verificado de
-> punta a punta, incluidas publicaciones recortadas y Native AOT. Hasta que se
-> publique, consume ese `.nupkg` desde un feed local o referencia los proyectos
-> directamente. Consulta la
-> [guía de uso](docs/guia-de-uso.md#1-instalar-desde-el-proyecto) para el detalle.
+> **Estado:** 1.0.0 es la primera versión estable. Tiene como destino `net8.0`,
+> `net9.0` y `net10.0`, y cada versión se verifica de punta a punta contra el
+> `.nupkg` real, incluidas las publicaciones recortadas y Native AOT. Consulta
+> [docs/RELEASING.md](docs/RELEASING.md) para ver cómo se publica una versión.
 
 ### 2. Habilitar los interceptores — nada que hacer
 

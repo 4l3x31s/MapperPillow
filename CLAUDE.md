@@ -48,6 +48,14 @@ without its generator, or degrade every call site to reflection, and stay green.
 Run `pwsh ./eng/Verify-Package.ps1` (add `-SkipAot` to skip the slow native link),
 which consumes the real `.nupkg` and asserts on behaviour. CI runs it per push.
 
+Releases are published by `.github/workflows/release.yml` on a `v*` tag, using
+NuGet **Trusted Publishing** (OIDC) and a `release` environment approval — there is
+no API key anywhere. `pwsh ./eng/Release.ps1` is the local pre-flight only; it
+cannot push. The nuget.org policy is registered against the **file name**
+`release.yml`, so renaming that workflow breaks publishing. See
+[docs/RELEASING.md](docs/RELEASING.md) before touching `<Version>`,
+`<AssemblyVersion>`, `eng/`, or that workflow.
+
 `net8.0` has no `FeatureSwitchDefinitionAttribute`; `src/MapperPillow/Polyfills.cs`
 declares an internal one under `#if !NET9_0_OR_GREATER`. The trimmer matches it by
 full type name, so do not rename or move it out of
